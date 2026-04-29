@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Envs
+.venv/
+.env
+env/
+venv/
+
+# Notebook
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project data — regeneratable from smard_client.py
+*.parquet
+*.csv
+!smard_merged_15min_head.csv
+
+# Large model artifacts (keep registry pointers, not weights)
+model_checkpoints/*.h5
+model_checkpoints/*.keras
+mlruns/
+models/production/
+models/candidates/
+
+# Outputs
+output/
+newplot.png

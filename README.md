@@ -1,198 +1,84 @@
-# ⚡ German Energy Load Forecasting
+# ⚡ Day-Ahead German Load Forecasting — Beating the TSO Baseline
 
-A comprehensive machine learning project that analyzes and forecasts German electricity load data from 2015-2020 using advanced deep learning models. This project provides insights into energy consumption patterns and delivers accurate 24-hour load predictions for energy grid management.
+> **Headline (placeholder until M15):** TensorFlow-based day-ahead quarter-hourly forecast for German grid load, benchmarked directly against the published TSO forecast on SMARD.
+>
+> **Skill score vs TSO**: _to be filled in after Milestone 4_
+>
+> **Live demo**: _to be filled in after Milestone 12_
 
-## 🎯 Project Overview
+## Why this project
 
-This project addresses the critical challenge of energy load forecasting in Germany's power grid by:
-- **Analyzing 5+ years** of hourly electricity consumption data (2015-2020)
-- **Training multiple deep learning models** (LSTM, GRU, Conv1D) for load prediction
-- **Providing interactive dashboards** for data exploration and model comparison
-- **Generating actionable insights** for energy infrastructure planning
+Every European TSO publishes a day-ahead grid-load forecast — in Germany that forecast lives on [SMARD](https://www.smard.de/) as `fc_cons__grid_load` and is the operational baseline that utilities, traders, and BRPs anchor on. This project trains a TensorFlow model on the same public data and measures itself directly against that published baseline using a **skill score** (`1 - MAE_model / MAE_TSO`).
 
-## 📁 Key Features & Files
+## What's in the box
 
-### Core Analysis Files
-- **`energy_analysis.py`** - Comprehensive data analysis script that generates:
-  - Daily, weekly, and seasonal load patterns
-  - Interactive HTML visualizations for time series analysis
-  - Statistical insights and business recommendations
-  - Performance metrics across different time periods
+- **Data**: SMARD German grid data, 2022-01 → 2026-03, quarter-hourly. Actual + forecast consumption, generation by source, and day-ahead prices for DE/LU plus 14 neighbour zones.
+- **Stack**: TensorFlow 2.16 / Keras (Functional API), `tf.data` pipelines, MLflow, FastAPI, Streamlit, GitHub Actions.
+- **Approach**: residual learning on top of the TSO forecast, real NWP weather, leakage-safe feature pipeline, quantile outputs (P10/P50/P90), conformal calibration, weekly online retraining.
 
-- **`energy_forecasting.ipynb`** - Main Jupyter notebook containing:
-  - Complete data preprocessing pipeline
-  - Feature engineering (time-based, seasonal, holiday features)
-  - Model training for LSTM, GRU, and Conv1D architectures
-  - Model comparison and evaluation metrics
-  - Training time analysis and performance benchmarking
+## Repo layout
 
-### Interactive Dashboards
-- **`eda.py`** - Streamlit dashboard for exploratory data analysis featuring:
-  - Executive summary with key performance indicators
-  - Interactive time pattern analysis
-  - Seasonal performance trends
-  - Business insights and recommendations
-  - Year-over-year growth analysis
+```
+src/loadforecast/
+  data/        # SMARD ingestion, cleaning, alignment
+  features/    # leakage-safe feature builders
+  models/      # Keras models (seq2seq LSTM, Conv-LSTM, TFT)
+  backtest/    # rolling-origin evaluator + TSO baseline
+  calibrate/   # split-conformal calibration
+  serve/       # FastAPI inference service
+tests/         # pytest (leakage, harness, API)
+notebooks/     # exploration + archived prior work
+dashboards/    # Streamlit app
+scripts/       # one-off utilities
+.github/workflows/   # daily forecast + weekly retrain
+```
 
-- **`dashboard.py`** - Model comparison dashboard displaying:
-  - Performance metrics across all models
-  - Prediction vs actual plots
-  - Residual analysis visualizations
-  - Real-time model evaluation results
+## Quickstart
 
-### Model Management
-- **`model_evaluation.py`** - Automated model evaluation script that:
-  - Loads trained models and generates predictions
-  - Calculates comprehensive metrics (MSE, RMSE, MAE, R²)
-  - Creates prediction and residual visualizations
-  - Saves comparison results to CSV format
+```bash
+# 1. Create env (conda + uv for speed)
+conda create -n loadforecast python=3.11 -y
+conda activate loadforecast
+pip install uv
+uv pip install -e ".[dev]"
 
-### Output & Results
-- **`output/`** - Generated visualizations and results:
-  - Interactive HTML plots for time series, daily patterns, seasonal analysis
-  - Model prediction plots and residual analysis
-  - Performance metrics CSV with detailed model comparisons
-  - Statistical distribution plots
+# 2. Verify install
+python -c "import tensorflow as tf; print('TF:', tf.__version__)"
+pytest -q
+ruff check src/
 
-- **`model_checkpoints/`** - Saved trained models:
-  - `best_LSTM.h5` - Best performing LSTM model
-  - `best_GRU.h5` - Best performing GRU model  
-  - `best_Conv1D.h5` - Best performing Conv1D model
+# 3. (After M1) Run the backtest against the TSO baseline
+python -m loadforecast.backtest --start 2025-01-01 --end 2026-03-01
+```
 
-## 🚀 Installation & Usage
+## Status
 
-### Prerequisites
-- Python 3.8+
-- pip package manager
+Built milestone-by-milestone with hard verification gates. Current milestone tracked in [PLAN.md](PLAN.md) (or `~/.claude/plans/i-have-this-folder-sleepy-dragonfly.md`).
 
-### Setup Instructions
+| # | Milestone | Status |
+|---|-----------|--------|
+| 0 | Repo hygiene | 🔄 in progress |
+| 1 | Backtest harness | ⏳ |
+| 2 | Leakage-safe features | ⏳ |
+| 3 | Classical baselines | ⏳ |
+| 4 | Seq2seq LSTM (TF) | ⏳ |
+| 5 | Weather features | ⏳ |
+| 6 | Quantile outputs | ⏳ |
+| 7 | TFT / Conv-LSTM upgrade | ⏳ |
+| 8 | Conformal calibration | ⏳ |
+| 9 | Ensemble | ⏳ |
+| 10 | FastAPI service | ⏳ |
+| 11 | Daily orchestration | ⏳ |
+| 12 | Streamlit dashboard | ⏳ |
+| 13 | Weekly retrain | ⏳ |
+| 14 | Drift monitoring | ⏳ |
+| 15 | README polish | ⏳ |
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd Energy_forecasting
-   ```
+## Data source
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+- [SMARD — Bundesnetzagentur](https://www.smard.de/) (public German electricity market data)
+- [Open-Meteo](https://open-meteo.com/) (numerical weather predictions, free tier)
 
-3. **Run the analysis pipeline**
-   ```bash
-   # Run comprehensive data analysis
-   python energy_analysis.py
-   
-   # Train and evaluate models
-   jupyter notebook energy_forecasting.ipynb
-   
-   # Evaluate model performance
-   python model_evaluation.py
-   ```
+## License
 
-4. **Launch interactive dashboards**
-   ```bash
-   # Launch EDA dashboard
-   streamlit run eda.py
-   
-   # Launch model comparison dashboard
-   streamlit run dashboard.py
-   ```
-
-## 📊 Results & Impact
-
-### Key Findings
-
-1. **Model Performance**: GRU achieved the best performance with:
-   - **R² Score: 94.2%** (excellent predictive accuracy)
-   - **RMSE: 0.052** (low prediction error)
-   - **MAE: 0.037** (minimal absolute error)
-
-2. **Energy Consumption Patterns**:
-   - **Peak Hours**: 18:00-20:00 (evening demand surge)
-   - **Off-Peak Hours**: 02:00-04:00 (lowest consumption)
-   - **Weekend Effect**: 15-20% lower consumption compared to weekdays
-   - **Seasonal Variation**: Winter shows highest average load, Summer lowest
-
-3. **Infrastructure Insights**:
-   - **Growth Trend**: Consistent year-over-year growth in energy demand
-   - **Variability**: Highest load variability during winter months
-   - **Holiday Impact**: Significant reduction in consumption during holidays
-
-### Business Value
-
-- **Grid Management**: Accurate 24-hour load predictions enable optimal power generation scheduling
-- **Cost Optimization**: Demand response programs can be targeted during peak hours
-- **Infrastructure Planning**: Seasonal patterns inform capacity expansion decisions
-- **Renewable Integration**: Load patterns guide renewable energy deployment strategies
-
-## 🛠 Tech Stack
-
-### Languages & Frameworks
-- **Python 3.8+** - Primary programming language
-- **Jupyter Notebook** - Interactive development and analysis
-- **Streamlit** - Interactive web dashboards
-
-### Data Science & ML Libraries
-- **TensorFlow/Keras** - Deep learning model development
-- **Pandas** - Data manipulation and analysis
-- **NumPy** - Numerical computations
-- **Scikit-learn** - Machine learning utilities and metrics
-
-### Visualization & Analysis
-- **Matplotlib** - Static plotting and visualization
-- **Seaborn** - Statistical data visualization
-- **Plotly** - Interactive HTML visualizations
-- **Holidays** - Holiday calendar integration
-
-### Model Architectures
-- **LSTM** - Long Short-Term Memory networks for sequence modeling
-- **GRU** - Gated Recurrent Units for efficient RNN implementation
-- **Conv1D** - 1D Convolutional Neural Networks for time series
-
-## Model Performance Comparison
-
-| Model | MSE | RMSE | MAE | R² Score | Training Time |
-|-------|-----|------|-----|----------|---------------|
-| **GRU** | 0.0027 | 0.052 | 0.037 | **94.2%** | Fastest |
-| **LSTM** | 0.0028 | 0.053 | 0.036 | 94.0% | Medium |
-| **Conv1D** | 0.0051 | 0.071 | 0.054 | 89.0% | Fastest |
-
-## Configuration
-
-The project uses several configuration options:
-- **Data Source**: Open Power System Data API
-- **Time Window**: 168 hours (7 days) input → 24 hours output
-- **Train/Val/Test Split**: 70%/15%/15% chronological split
-- **Feature Engineering**: Time-based, seasonal, and holiday features
-- **Model Checkpointing**: Best models saved based on validation loss
-
-## Contributing
-
-We welcome contributions! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Guidelines
-- Follow PEP 8 style guidelines
-- Add docstrings to all functions
-- Include unit tests for new features
-- Update documentation for any changes
-
-
-
-##  Acknowledgments
-
-- **Data Source**: [Open Power System Data](https://data.open-power-system-data.org/) for providing the German electricity load dataset
-- **Research Community**: Contributions from the energy forecasting and time series analysis communities
-- **Open Source Tools**: TensorFlow, Pandas, Streamlit, and other open-source libraries that made this project possible
-
-
-
----
-
-**Note**: This project is designed for educational and research purposes. For production deployment, additional considerations for data security, model monitoring, and system reliability should be implemented. 
+MIT
