@@ -55,20 +55,38 @@ def _date_str(ts: pd.Timestamp) -> str:
 
 
 def fetch_price(bzn: str, start: pd.Timestamp, end: pd.Timestamp, *, name: str) -> pd.Series:
-    """Day-ahead price for a bidding zone over [start, end] (UTC, 15-min)."""
+    """Day-ahead price for a bidding zone over [start, end] (UTC, 15-min).
+
+    EPEX moved from hourly to 15-min day-ahead auctions on 2025-10-01;
+    Energy-Charts returns hourly observations for earlier dates and
+    15-min from then on. We forward-fill onto a strict 15-min UTC grid
+    so the parquet has uniform resolution. Forward-fill is semantically
+    correct: the hourly auction clears one price valid for all four
+    quarter-hours of the hour.
+    """
     payload = _request("price", {
         "bzn": bzn,
         "start": _date_str(start),
         "end":   _date_str(end),
     })
     s = _to_series(payload["unix_seconds"], payload["price"], name)
-    return s.loc[(s.index >= start) & (s.index < end)]
+    s = s.loc[(s.index >= start) & (s.index < end)]
+    # Reindex onto a strict 15-min grid; ffill within each hour (limit=3).
+    grid = pd.date_range(start, end, freq="15min", inclusive="left")
+    return s.reindex(grid).ffill(limit=3).rename(name)
 
 
 def fetch_public_power(
     production_type: str, start: pd.Timestamp, end: pd.Timestamp, *, name: str,
 ) -> pd.Series:
-    """Actual generation for a single production type, Germany, 15-min."""
+    """Actual generation for a single production type, Germany, 15-min.
+
+    UNIT NOTE: Energy-Charts reports `MW` (instantaneous power) while the
+    SMARD CSV pipeline reports `MWh per quarter-hour` (energy, value/4 in
+    power terms). To stay consistent with the rest of our parquet — and
+    with M2 feature values trained on the old data — we convert MW to
+    MWh-per-QH by dividing by 4.
+    """
     payload = _request("public_power", {
         "country": "de",
         "start": _date_str(start),
@@ -78,7 +96,8 @@ def fetch_public_power(
     for pt in payload.get("production_types", []):
         if pt.get("name") == production_type:
             s = _to_series(payload["unix_seconds"], pt["data"], name)
-            return s.loc[(s.index >= start) & (s.index < end)]
+            s = s.loc[(s.index >= start) & (s.index < end)]
+            return (s / 4.0).rename(name)  # MW -> MWh per quarter-hour
     available = sorted({p.get("name") for p in payload.get("production_types", [])})
     raise KeyError(
         f"production_type {production_type!r} not in /public_power response. "

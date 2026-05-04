@@ -2,83 +2,71 @@
 
 Every column we keep in the parquet has exactly one entry here. The
 column name is a stable contract used across the project (M2 features
-reference these names verbatim, the LSTM windowing uses two of them,
-and so on).
+reference these names verbatim, the LSTM windowing uses two of them).
 
 Adding a new column: append a `Column(...)` to `COLUMNS` below.
-- `name` — the parquet column name. Must be unique. Snake-case prefix
-  encodes the kind: `actual_cons__`, `actual_gen__`, `fc_cons__`,
-  `fc_gen__`, `price__`. The prefix is what `availability.classify_column`
-  reads to decide leakage rules.
-- `source` — which sources/<file>.py knows how to fetch it.
-- `description` — one line for humans.
+- `name`            parquet column name. Must be unique. Snake-case prefix
+                    encodes the kind: `actual_cons__`, `actual_gen__`,
+                    `fc_cons__`, `fc_gen__`, `price__`. Used by
+                    `availability.classify_column` for leakage rules.
+- `source`          which sources/<file>.py knows how to fetch it.
+- `fetch_kwargs`    source-specific params.
 
-The schema is data-agnostic: it doesn't fetch anything itself. The
-`refresh` orchestrator iterates `COLUMNS` and dispatches to the right
-source module.
+Source priority (most automated → least):
+
+  1. SRC_ENERGY_CHARTS — REST, no auth. Day-ahead prices (15 zones),
+                         actual generation by source.
+  2. SRC_SMARD_API     — REST, no auth. Things with known filter IDs
+                         (total grid load = 410).
+  3. SRC_SMARD_CSV     — manual download fallback. Used for the TSO
+                         load + generation forecasts whose SMARD filter
+                         IDs we couldn't discover.
+  4. SRC_ENTSOE        — token-gated; not currently used. Adding the
+                         token simply re-routes columns 3+4 here.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-# Source identifiers — must match the module name under sources/
+# Source identifiers
 SRC_ENERGY_CHARTS = "energy_charts"
+SRC_SMARD_API = "smard_api"
+SRC_SMARD_CSV = "smard_csv"
 SRC_ENTSOE = "entsoe"
 
 
-# Bidding zones we pull day-ahead prices for, with the column suffix to use.
-# Matches the existing parquet's `price__*` columns and the entsoe-py /
-# energy-charts zone codes.
+# Bidding zones we pull day-ahead prices for, with the zone code suffix.
 PRICE_ZONES: dict[str, dict[str, str]] = {
-    "germany_luxembourg":   {"ec": "DE-LU",   "entsoe": "DE_LU"},
-    "france":               {"ec": "FR",      "entsoe": "FR"},
-    "netherlands":          {"ec": "NL",      "entsoe": "NL"},
-    "austria":              {"ec": "AT",      "entsoe": "AT"},
-    "belgium":              {"ec": "BE",      "entsoe": "BE"},
-    "switzerland":          {"ec": "CH",      "entsoe": "CH"},
-    "czech_republic":       {"ec": "CZ",      "entsoe": "CZ"},
-    "poland":               {"ec": "PL",      "entsoe": "PL"},
-    "denmark_1":            {"ec": "DK1",     "entsoe": "DK_1"},
-    "denmark_2":            {"ec": "DK2",     "entsoe": "DK_2"},
-    "norway_2":             {"ec": "NO2",     "entsoe": "NO_2"},
-    "sweden_4":             {"ec": "SE4",     "entsoe": "SE_4"},
-    "slovenia":             {"ec": "SI",      "entsoe": "SI"},
-    "hungary":              {"ec": "HU",      "entsoe": "HU"},
-    # IT-NORTH 400'd on energy-charts; ENTSO-E code is IT_NORD. Add later if needed.
-}
-
-
-# Energy-Charts production-type strings → our column suffix.
-GEN_SOURCES: dict[str, str] = {
-    "biomass":              "biomass",
-    "hydro_run_of_river":   "hydropower",
-    "wind_offshore":        "wind_offshore",
-    "wind_onshore":         "wind_onshore",
-    "solar":                "photovoltaics",
-    "renewable_share_of_load": None,  # placeholder, ignored
-    "fossil_brown_coal":    "lignite",
-    "fossil_hard_coal":     "hard_coal",
-    "fossil_gas":           "fossil_gas",
-    "hydro_pumped_storage": "hydro_pumped_storage",
-    "others":               "other_conventional",
-    "renewables":           "other_renewable",  # rough mapping
+    "germany_luxembourg":   {"ec": "DE-LU"},
+    "france":               {"ec": "FR"},
+    "netherlands":          {"ec": "NL"},
+    "austria":              {"ec": "AT"},
+    "belgium":              {"ec": "BE"},
+    "switzerland":          {"ec": "CH"},
+    "czech_republic":       {"ec": "CZ"},
+    "poland":               {"ec": "PL"},
+    "denmark_1":            {"ec": "DK1"},
+    "denmark_2":            {"ec": "DK2"},
+    "norway_2":             {"ec": "NO2"},
+    "sweden_4":             {"ec": "SE4"},
+    "slovenia":             {"ec": "SI"},
+    "hungary":              {"ec": "HU"},
 }
 
 
 @dataclass(frozen=True)
 class Column:
-    name: str           # exact parquet column name
-    source: str         # SRC_ENERGY_CHARTS or SRC_ENTSOE
+    name: str
+    source: str
     description: str
-    fetch_kwargs: dict = None  # source-specific fetch parameters
+    fetch_kwargs: dict = field(default_factory=dict)
 
 
-# Build the full column list programmatically.
 def _build_columns() -> list[Column]:
     cols: list[Column] = []
 
-    # 1. Day-ahead prices for every zone (energy-charts).
+    # 1. Day-ahead prices — Energy-Charts (no auth).
     for suffix, codes in PRICE_ZONES.items():
         cols.append(Column(
             name=f"price__{suffix}",
@@ -87,101 +75,56 @@ def _build_columns() -> list[Column]:
             fetch_kwargs={"endpoint": "price", "bzn": codes["ec"]},
         ))
 
-    # 2. Actual generation by source (energy-charts /public_power).
-    cols.append(Column(
-        name="actual_gen__photovoltaics",
-        source=SRC_ENERGY_CHARTS,
-        description="Actual solar PV generation, MW",
-        fetch_kwargs={"endpoint": "public_power", "production_type": "Solar"},
-    ))
-    cols.append(Column(
-        name="actual_gen__wind_onshore",
-        source=SRC_ENERGY_CHARTS,
-        description="Actual onshore wind generation, MW",
-        fetch_kwargs={"endpoint": "public_power", "production_type": "Wind onshore"},
-    ))
-    cols.append(Column(
-        name="actual_gen__wind_offshore",
-        source=SRC_ENERGY_CHARTS,
-        description="Actual offshore wind generation, MW",
-        fetch_kwargs={"endpoint": "public_power", "production_type": "Wind offshore"},
-    ))
-    cols.append(Column(
-        name="actual_gen__biomass",
-        source=SRC_ENERGY_CHARTS,
-        description="Actual biomass generation, MW",
-        fetch_kwargs={"endpoint": "public_power", "production_type": "Biomass"},
-    ))
-    cols.append(Column(
-        name="actual_gen__hydropower",
-        source=SRC_ENERGY_CHARTS,
-        description="Actual hydropower (run-of-river) generation, MW",
-        fetch_kwargs={"endpoint": "public_power", "production_type": "Hydro Run-of-River"},
-    ))
-    cols.append(Column(
-        name="actual_gen__hydro_pumped_storage",
-        source=SRC_ENERGY_CHARTS,
-        description="Actual hydro pumped-storage generation, MW",
-        fetch_kwargs={"endpoint": "public_power", "production_type": "Hydro pumped storage"},
-    ))
-    cols.append(Column(
-        name="actual_gen__lignite",
-        source=SRC_ENERGY_CHARTS,
-        description="Actual lignite (brown coal) generation, MW",
-        fetch_kwargs={"endpoint": "public_power", "production_type": "Fossil brown coal / lignite"},
-    ))
-    cols.append(Column(
-        name="actual_gen__hard_coal",
-        source=SRC_ENERGY_CHARTS,
-        description="Actual hard coal generation, MW",
-        fetch_kwargs={"endpoint": "public_power", "production_type": "Fossil hard coal"},
-    ))
-    cols.append(Column(
-        name="actual_gen__fossil_gas",
-        source=SRC_ENERGY_CHARTS,
-        description="Actual fossil-gas generation, MW",
-        fetch_kwargs={"endpoint": "public_power", "production_type": "Fossil gas"},
-    ))
-    cols.append(Column(
-        name="actual_gen__other_renewable",
-        source=SRC_ENERGY_CHARTS,
-        description="Actual other-renewable generation (geothermal, etc.), MW",
-        fetch_kwargs={"endpoint": "public_power", "production_type": "Other renewable"},
-    ))
-    cols.append(Column(
-        name="actual_gen__other_conventional",
-        source=SRC_ENERGY_CHARTS,
-        description="Actual other-conventional generation, MW",
-        fetch_kwargs={"endpoint": "public_power", "production_type": "Others"},
-    ))
+    # 2. Actual generation by source — Energy-Charts.
+    EC_GEN = [
+        ("photovoltaics",        "Solar"),
+        ("wind_onshore",         "Wind onshore"),
+        ("wind_offshore",        "Wind offshore"),
+        ("biomass",              "Biomass"),
+        ("hydropower",           "Hydro Run-of-River"),
+        ("hydro_pumped_storage", "Hydro pumped storage"),
+        ("lignite",              "Fossil brown coal / lignite"),
+        ("hard_coal",            "Fossil hard coal"),
+        ("fossil_gas",           "Fossil gas"),
+        ("other_renewable",      "Renewable share of load"),
+        ("other_conventional",   "Others"),
+    ]
+    for suffix, ec_name in EC_GEN:
+        cols.append(Column(
+            name=f"actual_gen__{suffix}",
+            source=SRC_ENERGY_CHARTS,
+            description=f"Actual {suffix} generation, MW",
+            fetch_kwargs={"endpoint": "public_power", "production_type": ec_name},
+        ))
 
-    # 3. Actual + forecast load (ENTSO-E).
+    # 3. Actual grid load — SMARD API filter 410 (no auth).
     cols.append(Column(
         name="actual_cons__grid_load",
-        source=SRC_ENTSOE,
+        source=SRC_SMARD_API,
         description="Actual total grid load (national consumption), MW",
-        fetch_kwargs={"method": "load", "country_code": "DE_LU"},
+        fetch_kwargs={"filter_id": 410, "region": "DE-LU"},
     ))
     cols.append(Column(
-        name="fc_cons__grid_load",
-        source=SRC_ENTSOE,
-        description="Day-ahead total grid load forecast (TSO baseline), MW",
-        fetch_kwargs={"method": "load_forecast", "country_code": "DE_LU"},
+        name="actual_cons__residual_load",
+        source=SRC_SMARD_API,
+        description="Actual residual load (load - VRE generation), MW",
+        fetch_kwargs={"filter_id": 4359, "region": "DE-LU"},
     ))
 
-    # 4. TSO generation forecasts (ENTSO-E).
-    cols.append(Column(
-        name="fc_gen__total",
-        source=SRC_ENTSOE,
-        description="Day-ahead total generation forecast, MW",
-        fetch_kwargs={"method": "generation_forecast", "country_code": "DE_LU"},
-    ))
-    cols.append(Column(
-        name="fc_gen__photovoltaics_and_wind",
-        source=SRC_ENTSOE,
-        description="Day-ahead wind+solar forecast (sum of all VRE), MW",
-        fetch_kwargs={"method": "wind_and_solar_forecast", "country_code": "DE_LU"},
-    ))
+    # 4. TSO load + generation forecasts — SMARD CSV download (manual until ENTSO-E).
+    for suffix in ("grid_load", "residual_load"):
+        cols.append(Column(
+            name=f"fc_cons__{suffix}",
+            source=SRC_SMARD_CSV,
+            description=f"Day-ahead {suffix} forecast (TSO baseline), MW",
+        ))
+    for suffix in ("total", "photovoltaics_and_wind", "wind_offshore",
+                   "wind_onshore", "photovoltaics", "other"):
+        cols.append(Column(
+            name=f"fc_gen__{suffix}",
+            source=SRC_SMARD_CSV,
+            description=f"Day-ahead {suffix.replace('_', ' ')} generation forecast, MW",
+        ))
 
     return cols
 
@@ -198,9 +141,10 @@ __all__ = [
     "COLUMNS",
     "COLUMN_BY_NAME",
     "Column",
-    "GEN_SOURCES",
     "PRICE_ZONES",
     "SRC_ENERGY_CHARTS",
     "SRC_ENTSOE",
+    "SRC_SMARD_API",
+    "SRC_SMARD_CSV",
     "columns_by_source",
 ]

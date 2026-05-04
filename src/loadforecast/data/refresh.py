@@ -31,11 +31,18 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-from .schema import COLUMNS, SRC_ENERGY_CHARTS, SRC_ENTSOE, Column
+from .schema import (
+    COLUMNS,
+    SRC_ENERGY_CHARTS,
+    SRC_ENTSOE,
+    SRC_SMARD_API,
+    SRC_SMARD_CSV,
+    Column,
+)
 
 DEFAULT_PARQUET = Path("smard_merged_15min.parquet")
 DEFAULT_START = pd.Timestamp("2022-01-01", tz="UTC")
-SOURCES = (SRC_ENERGY_CHARTS, SRC_ENTSOE)
+SOURCES = (SRC_ENERGY_CHARTS, SRC_SMARD_API, SRC_SMARD_CSV, SRC_ENTSOE)
 
 # Columns we *must* have (M4 dataset breaks without them).
 REQUIRED = {
@@ -50,6 +57,12 @@ def _load_source(source_name: str):
     if source_name == SRC_ENERGY_CHARTS:
         from .sources import energy_charts
         return energy_charts
+    if source_name == SRC_SMARD_API:
+        from .sources import smard_api
+        return smard_api
+    if source_name == SRC_SMARD_CSV:
+        from .sources import smard_csv
+        return smard_csv
     if source_name == SRC_ENTSOE:
         from .sources import entsoe
         return entsoe
