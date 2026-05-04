@@ -115,7 +115,6 @@ Active development, building milestone-by-milestone with verification gates. Pri
 - **Probabilistic outputs** — quantile heads (P10/P50/P90) with split-conformal calibration for guaranteed empirical coverage.
 - **Production deployment** — FastAPI inference endpoint, GitHub Actions daily refresh, Streamlit dashboard with rolling skill-vs-TSO chart.
 
-
 ## License
 
 MIT. Data: CC-BY 4.0 (SMARD / Bundesnetzagentur, ENTSO-E).

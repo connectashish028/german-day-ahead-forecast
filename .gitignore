@@ -42,6 +42,9 @@ models/candidates/
 # Training logs
 logs/
 
+# Internal planning — kept local
+PLAN.md
+
 # Outputs
 output/
 newplot.png
