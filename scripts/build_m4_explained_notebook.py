@@ -36,11 +36,18 @@ CELLS = [
 
     nbf.v4.new_code_cell(
         "import json\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "\n"
+        "# Run from project root regardless of launch dir.\n"
+        "_here = Path.cwd()\n"
+        "ROOT = _here if (_here / 'pyproject.toml').exists() else _here.parent\n"
+        "os.chdir(ROOT)\n"
+        "\n"
         "import numpy as np\n"
         "import pandas as pd\n"
         "import plotly.graph_objects as go\n"
         "from plotly.subplots import make_subplots\n"
-        "from pathlib import Path\n"
         "\n"
         "from loadforecast.backtest import issue_time_for, load_smard_15min\n"
         "from loadforecast.backtest.baselines import tso_baseline_predict\n"
@@ -194,7 +201,7 @@ CELLS = [
     ),
 
     nbf.v4.new_code_cell(
-        "meta = json.loads(Path(DEFAULT_MODEL_DIR / 'meta.json').read_text())\n"
+        "meta = json.loads((DEFAULT_MODEL_DIR / 'meta.json').read_text())\n"
         "print('Training metadata:')\n"
         "for k in ('train_n', 'val_n', 'epochs_run', 'train_time_s',\n"
         "         'val_residual_mae_mw', 'val_residual_rmse_mw', 'val_implied_skill'):\n"

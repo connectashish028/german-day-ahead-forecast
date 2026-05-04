@@ -42,7 +42,15 @@ CELLS = [
 
     nbf.v4.new_code_cell(
         "import json\n"
+        "import os\n"
         "from pathlib import Path\n"
+        "\n"
+        "# Resolve paths relative to the project root regardless of where the\n"
+        "# notebook is launched from (notebooks/ or repo root).\n"
+        "_here = Path.cwd()\n"
+        "ROOT = _here if (_here / 'pyproject.toml').exists() else _here.parent\n"
+        "os.chdir(ROOT)\n"
+        "\n"
         "import numpy as np\n"
         "import pandas as pd\n"
         "import plotly.graph_objects as go\n"
@@ -55,8 +63,8 @@ CELLS = [
         ")\n"
         "\n"
         "df = load_smard_15min('smard_merged_15min.parquet')\n"
-        "plain_meta = json.loads(Path(DEFAULT_MODEL_DIR / 'meta.json').read_text())\n"
-        "attn_meta  = json.loads(Path(DEFAULT_ATTENTION_DIR / 'meta.json').read_text())\n"
+        "plain_meta = json.loads((DEFAULT_MODEL_DIR / 'meta.json').read_text())\n"
+        "attn_meta  = json.loads((DEFAULT_ATTENTION_DIR / 'meta.json').read_text())\n"
     ),
 
     nbf.v4.new_markdown_cell("## 1. Scoreboard"),
