@@ -12,6 +12,7 @@ from datetime import date
 
 from .baselines import seasonal_naive_predict, tso_baseline_predict
 from .harness import quick_backtest
+from .sarimax_baseline import sarimax_residual_predict
 
 
 def _resolve_predictor(spec: str):
@@ -39,11 +40,13 @@ def main() -> None:
     p.add_argument("--label", default=None)
     p.add_argument("--out", default=None, help="Optional path for per-step CSV.")
     p.add_argument("--no-progress", action="store_true")
+    p.add_argument("--step-days", type=int, default=1, help="Stride between delivery dates.")
     args = p.parse_args()
 
     predictors = {
         "tso": tso_baseline_predict,
         "seasonal_naive": seasonal_naive_predict,
+        "sarimax_residual": sarimax_residual_predict,
     }
     if args.predictor in predictors:
         fn = predictors[args.predictor]
@@ -59,6 +62,7 @@ def main() -> None:
         parquet_path=args.data,
         progress=not args.no_progress,
         label=label,
+        step_days=args.step_days,
     )
 
     print()
