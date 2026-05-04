@@ -87,51 +87,59 @@ def build_window(
     issue_time: pd.Timestamp,
     *,
     include_weather: bool = False,
+    include_load_history: bool = True,
+    include_residual: bool = True,
+    include_tso_fc_dec: bool = True,
 ) -> Window:
     """Build encoder/decoder/target arrays for a single issue time.
 
-    When `include_weather=True`, the four `weather__*` columns are
-    appended to BOTH encoder and decoder feature stacks. The expected
-    column count grows from 6 to 10 in each.
+    Default flags reproduce the M4+ feature set (load + residual in encoder,
+    tso_fc in decoder, optional weather). The extra flags exist for the M4-pt3
+    feature ablation — flipping one off lets us measure that group's marginal
+    contribution while keeping calendar features always on.
     """
     enc_idx = _encoder_index(issue_time)
     target_idx = _delivery_target_index(issue_time)
 
-    # Mask future-leaking values per M2 availability rules.
     needed_cols = (ACTUAL_LOAD, TSO_FC)
     if include_weather:
         needed_cols = (*needed_cols, *WEATHER_COLS)
     masked = usable_columns(df, issue_time, include=needed_cols)
 
-    # Encoder
-    load = masked[ACTUAL_LOAD].reindex(enc_idx).to_numpy()
-    tso_h = masked[TSO_FC].reindex(enc_idx).to_numpy()
-    residual_hist = load - tso_h
+    # Encoder — calendar always on.
     cal_enc = calendar_features(enc_idx)
     enc_stack = [
-        load,
-        residual_hist,
         cal_enc["hour_sin"].to_numpy(),
         cal_enc["hour_cos"].to_numpy(),
         cal_enc["dow_sin"].to_numpy(),
         cal_enc["dow_cos"].to_numpy(),
     ]
+    load = masked[ACTUAL_LOAD].reindex(enc_idx).to_numpy()
+    tso_h = masked[TSO_FC].reindex(enc_idx).to_numpy()
+    if include_load_history:
+        enc_stack.insert(0, load)
+    if include_residual:
+        residual_hist = load - tso_h
+        # keep residual right after load if both present, else at front
+        insert_at = 1 if include_load_history else 0
+        enc_stack.insert(insert_at, residual_hist)
     if include_weather:
         for w in WEATHER_COLS:
             enc_stack.append(masked[w].reindex(enc_idx).to_numpy())
     X_enc = np.column_stack(enc_stack).astype(np.float32)
 
-    # Decoder (future-known)
-    tso_d = masked[TSO_FC].reindex(target_idx).to_numpy()
+    # Decoder — calendar + holiday always on.
     cal_dec = calendar_features(target_idx)
     dec_stack = [
-        tso_d,
         cal_dec["hour_sin"].to_numpy(),
         cal_dec["hour_cos"].to_numpy(),
         cal_dec["dow_sin"].to_numpy(),
         cal_dec["dow_cos"].to_numpy(),
         cal_dec["is_federal_holiday"].astype(float).to_numpy(),
     ]
+    if include_tso_fc_dec:
+        tso_d = masked[TSO_FC].reindex(target_idx).to_numpy()
+        dec_stack.insert(0, tso_d)
     if include_weather:
         for w in WEATHER_COLS:
             dec_stack.append(masked[w].reindex(target_idx).to_numpy())
@@ -150,6 +158,9 @@ def build_dataset(
     *,
     drop_incomplete: bool = True,
     include_weather: bool = False,
+    include_load_history: bool = True,
+    include_residual: bool = True,
+    include_tso_fc_dec: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[pd.Timestamp]]:
     """Stack many windows into training arrays.
 
@@ -158,7 +169,13 @@ def build_dataset(
     """
     Xe, Xd, Y, kept = [], [], [], []
     for t in issue_times:
-        w = build_window(df, t, include_weather=include_weather)
+        w = build_window(
+            df, t,
+            include_weather=include_weather,
+            include_load_history=include_load_history,
+            include_residual=include_residual,
+            include_tso_fc_dec=include_tso_fc_dec,
+        )
         if drop_incomplete and (
             np.isnan(w.X_enc).any()
             or np.isnan(w.X_dec).any()
