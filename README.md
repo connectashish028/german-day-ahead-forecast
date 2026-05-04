@@ -1,18 +1,26 @@
 # ⚡ Day-Ahead German Load Forecasting — Beating the TSO Baseline
 
-> A TensorFlow seq2seq LSTM that day-ahead-forecasts the German grid load
-> at 15-minute resolution and **beats the published TSO forecast by 21.5%**
-> on a stratified 70-date holdout window.
+> A TensorFlow seq2seq LSTM with NWP weather features that day-ahead-forecasts
+> the German grid load at 15-minute resolution and **beats the published TSO
+> forecast by 25.3%** on a stratified 70-date holdout window.
 
 | Predictor | MAE (MW) | MAPE (%) | Skill vs TSO |
 |---|---|---|---|
 | Seasonal-naive (D-7 actuals) | 618.3 | 4.21 | −0.256 |
 | **TSO baseline** (`fc_cons__grid_load` on SMARD) | **492.4** | **3.36** | 0.000 |
 | SARIMAX-on-residual | 441.7 | 3.00 | +0.103 |
-| **Plain seq2seq LSTM (this work)** | **386.7** | **2.66** | **+0.215** |
+| Plain seq2seq LSTM | 386.7 | 2.66 | +0.215 |
+| **Plain LSTM + NWP weather (this work)** | **367.8** | **2.56** | **+0.253** |
 
 *Backtest: rolling origin over 2025-01-01 → 2026-04-30, step 7 days, n = 70 delivery dates.
-Skill = 1 − MAE_model / MAE_TSO. No weather inputs yet — weather lands in M5.*
+Skill = 1 − MAE_model / MAE_TSO.*
+
+**Where the weather signal pays off most.** On 1 May 2026 — federal holiday, clear sky,
+record 54 GW PV peak, prices crashing to **−500 €/MWh** — the TSO badly under-forecast
+midday consumption (1180 MW MAE). Our weather-aware LSTM cut that error in half
+(582 MW MAE, **+0.51 skill on the day**). The +0.038 average lift is a blend of
+"calm days where weather adds nothing" and "extreme weather days where weather is
+the entire story." See `notebooks/06_weather_impact.ipynb`.
 
 ## Why this project
 
@@ -33,13 +41,18 @@ different.
   systematic *errors*, which are large, structured, and stable — the TSO
   over-forecasts midday consumption by ~250 MW because it under-estimates PV.
 - **Seq2seq LSTM** (encoder LSTM(64) → state → decoder LSTM(64) → Dense). 36k params.
-  Trained in 3.2 minutes on CPU.
+  Trained in ~3 minutes on CPU; ~1 minute on GPU.
 - **Leakage-safe feature pipeline** with a corrupt-future test: scramble every
   post-issue-time value in the source frame, rebuild features, assert bit-for-bit
   identical. Tested across 9 stratified delivery dates including DST transitions and
   holidays.
+- **NWP weather features** from Open-Meteo's `/historical-forecast` endpoint —
+  temperature, shortwave radiation, wind 100m, cloud cover, population-weighted
+  across 6 German load centres. Adds +0.038 average skill (and +0.5 on PV-extreme
+  days). Modestly *worse* than no-weather during the 7–10h morning ramp, an honest
+  artefact documented in notebook 06.
 - **Multi-source data layer.** Energy-Charts (prices, generation), SMARD (load,
-  forecasts), Open-Meteo (weather, M5). Idempotent refresh: one CLI command rebuilds
+  forecasts), Open-Meteo (weather). Idempotent refresh: one CLI command rebuilds
   the parquet from public APIs.
 
 ## Repo layout
@@ -84,17 +97,25 @@ python -m loadforecast.backtest --predictor lstm_plain \
 ## Notebooks
 
 - **[01 – Backtest visualisation](notebooks/01_backtest_visualization.ipynb)** —
-  TSO baseline characterised: 504 MW MAE, 3.73% MAPE; error by hour-of-day shows
+  TSO baseline characterised: 492 MW MAE, 3.36% MAPE; error by hour-of-day shows
   the persistent midday over-forecast.
 - **[02 – Feature pipeline](notebooks/02_feature_pipeline_visualization.ipynb)** —
   availability rules, leakage-safe lags, rolling stats, top features by correlation
   with the residual.
 - **[03 – Baseline shoot-out](notebooks/03_baselines_visualization.ipynb)** —
-  TSO vs seasonal-naive vs SARIMAX. SARIMAX-on-residual beats the TSO by +11%
+  TSO vs seasonal-naive vs SARIMAX. SARIMAX-on-residual beats the TSO by +10%
   skill — a no-weather AR model already extracts the persistent bias.
 - **[04 – LSTM explained](notebooks/04_lstm_explained.ipynb)** —
   plain-language tour of the seq2seq architecture, walked through with one delivery
   day end-to-end. Loss curves, encoder/decoder inputs, predicted residual.
+- **[05 – Attention experiment](notebooks/05_attention_visualisation.ipynb)** —
+  added Bahdanau attention. Beat plain LSTM on validation by +0.016, *lost* on
+  holdout by −0.145 — textbook overfitting. Documented as a negative result;
+  plain LSTM stays as production.
+- **[06 – Weather impact](notebooks/06_weather_impact.ipynb)** —
+  where the NWP signal pays off (afternoon/evening peaks), where it doesn't
+  (morning ramp), and the 1 May 2026 PV-glut case study where weather cuts
+  the TSO error in half.
 
 ## Data sources
 
