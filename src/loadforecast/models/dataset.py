@@ -51,6 +51,15 @@ DEC_FEATURE_NAMES = (
     "is_federal_holiday",
 )
 
+# Weather columns (optional, M5+). When `include_weather=True` is passed to
+# build_window/build_dataset, these get appended to BOTH encoder and decoder.
+WEATHER_COLS = (
+    "weather__temperature_2m",
+    "weather__shortwave_radiation",
+    "weather__wind_speed_100m",
+    "weather__cloud_cover",
+)
+
 
 @dataclass
 class Window:
@@ -73,43 +82,60 @@ def _delivery_target_index(issue_time: pd.Timestamp) -> pd.DatetimeIndex:
     return target_index_for(delivery_local.date())
 
 
-def build_window(df: pd.DataFrame, issue_time: pd.Timestamp) -> Window:
-    """Build encoder/decoder/target arrays for a single issue time."""
+def build_window(
+    df: pd.DataFrame,
+    issue_time: pd.Timestamp,
+    *,
+    include_weather: bool = False,
+) -> Window:
+    """Build encoder/decoder/target arrays for a single issue time.
+
+    When `include_weather=True`, the four `weather__*` columns are
+    appended to BOTH encoder and decoder feature stacks. The expected
+    column count grows from 6 to 10 in each.
+    """
     enc_idx = _encoder_index(issue_time)
     target_idx = _delivery_target_index(issue_time)
 
     # Mask future-leaking values per M2 availability rules.
-    masked = usable_columns(df, issue_time, include=(ACTUAL_LOAD, TSO_FC))
+    needed_cols = (ACTUAL_LOAD, TSO_FC)
+    if include_weather:
+        needed_cols = (*needed_cols, *WEATHER_COLS)
+    masked = usable_columns(df, issue_time, include=needed_cols)
 
     # Encoder
     load = masked[ACTUAL_LOAD].reindex(enc_idx).to_numpy()
     tso_h = masked[TSO_FC].reindex(enc_idx).to_numpy()
     residual_hist = load - tso_h
     cal_enc = calendar_features(enc_idx)
-    X_enc = np.column_stack(
-        [
-            load,
-            residual_hist,
-            cal_enc["hour_sin"].to_numpy(),
-            cal_enc["hour_cos"].to_numpy(),
-            cal_enc["dow_sin"].to_numpy(),
-            cal_enc["dow_cos"].to_numpy(),
-        ]
-    ).astype(np.float32)
+    enc_stack = [
+        load,
+        residual_hist,
+        cal_enc["hour_sin"].to_numpy(),
+        cal_enc["hour_cos"].to_numpy(),
+        cal_enc["dow_sin"].to_numpy(),
+        cal_enc["dow_cos"].to_numpy(),
+    ]
+    if include_weather:
+        for w in WEATHER_COLS:
+            enc_stack.append(masked[w].reindex(enc_idx).to_numpy())
+    X_enc = np.column_stack(enc_stack).astype(np.float32)
 
     # Decoder (future-known)
     tso_d = masked[TSO_FC].reindex(target_idx).to_numpy()
     cal_dec = calendar_features(target_idx)
-    X_dec = np.column_stack(
-        [
-            tso_d,
-            cal_dec["hour_sin"].to_numpy(),
-            cal_dec["hour_cos"].to_numpy(),
-            cal_dec["dow_sin"].to_numpy(),
-            cal_dec["dow_cos"].to_numpy(),
-            cal_dec["is_federal_holiday"].astype(float).to_numpy(),
-        ]
-    ).astype(np.float32)
+    dec_stack = [
+        tso_d,
+        cal_dec["hour_sin"].to_numpy(),
+        cal_dec["hour_cos"].to_numpy(),
+        cal_dec["dow_sin"].to_numpy(),
+        cal_dec["dow_cos"].to_numpy(),
+        cal_dec["is_federal_holiday"].astype(float).to_numpy(),
+    ]
+    if include_weather:
+        for w in WEATHER_COLS:
+            dec_stack.append(masked[w].reindex(target_idx).to_numpy())
+    X_dec = np.column_stack(dec_stack).astype(np.float32)
 
     # Target — uses the *raw* (non-masked) frame because at training time
     # we deliberately have ground truth from the future.
@@ -123,6 +149,7 @@ def build_dataset(
     issue_times: Iterable[pd.Timestamp],
     *,
     drop_incomplete: bool = True,
+    include_weather: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[pd.Timestamp]]:
     """Stack many windows into training arrays.
 
@@ -131,7 +158,7 @@ def build_dataset(
     """
     Xe, Xd, Y, kept = [], [], [], []
     for t in issue_times:
-        w = build_window(df, t)
+        w = build_window(df, t, include_weather=include_weather)
         if drop_incomplete and (
             np.isnan(w.X_enc).any()
             or np.isnan(w.X_dec).any()

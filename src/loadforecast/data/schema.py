@@ -34,6 +34,7 @@ SRC_ENERGY_CHARTS = "energy_charts"
 SRC_SMARD_API = "smard_api"
 SRC_SMARD_CSV = "smard_csv"
 SRC_ENTSOE = "entsoe"
+SRC_OPEN_METEO = "open_meteo"
 
 
 # Bidding zones we pull day-ahead prices for, with the zone code suffix.
@@ -126,6 +127,21 @@ def _build_columns() -> list[Column]:
             description=f"Day-ahead {suffix.replace('_', ' ')} generation forecast, MW",
         ))
 
+    # 5. Weather (Open-Meteo NWP, population-weighted across 6 load centres).
+    OM_VARS = [
+        ("temperature_2m",      "Temperature at 2m, degC, pop-weighted national"),
+        ("shortwave_radiation", "Shortwave (solar) radiation, W/m^2, pop-weighted"),
+        ("wind_speed_100m",     "Wind speed at 100m, km/h, pop-weighted"),
+        ("cloud_cover",         "Cloud cover %, pop-weighted"),
+    ]
+    for var, desc in OM_VARS:
+        cols.append(Column(
+            name=f"weather__{var}",
+            source=SRC_OPEN_METEO,
+            description=desc,
+            fetch_kwargs={"variable": var},
+        ))
+
     return cols
 
 
@@ -144,6 +160,7 @@ __all__ = [
     "PRICE_ZONES",
     "SRC_ENERGY_CHARTS",
     "SRC_ENTSOE",
+    "SRC_OPEN_METEO",
     "SRC_SMARD_API",
     "SRC_SMARD_CSV",
     "columns_by_source",

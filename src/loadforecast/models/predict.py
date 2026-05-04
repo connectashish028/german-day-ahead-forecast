@@ -20,6 +20,7 @@ from .dataset import FeatureScaler, build_window
 
 DEFAULT_MODEL_DIR = Path("model_checkpoints/lstm_plain_v1")
 DEFAULT_ATTENTION_DIR = Path("model_checkpoints/lstm_attention_v1")
+DEFAULT_WEATHER_DIR = Path("model_checkpoints/lstm_weather_v1")
 
 
 @dataclass
@@ -65,24 +66,18 @@ def lstm_residual_predict(
 ) -> pd.Series:
     """Predict the delivery-day grid load: TSO forecast + LSTM residual correction.
 
-    Steps:
-      1. Build the seq2seq window at `issue_time` (encoder=last 7d, decoder=delivery day).
-      2. Standardise with the saved scaler (fit on training data only).
-      3. Forward-pass to get predicted residual (96 normalised steps).
-      4. Inverse-transform and add to the TSO published forecast for the day.
-
-    If the encoder/decoder window contains any NaN (e.g. issue date too
-    early in the dataset), fall back to the raw TSO forecast.
+    Reads `meta.json` to detect whether the trained model expects weather
+    features, and builds the window accordingly. Falls back to the raw
+    TSO forecast if the window contains NaN (e.g. for an issue date too
+    early in the dataset).
     """
     model_dir = Path(model_dir)
     bundle = _get(model_dir)
-    w = build_window(df, issue_time)
+    include_weather = bool(bundle.meta.get("include_weather", False))
+    w = build_window(df, issue_time, include_weather=include_weather)
 
-    if (
-        np.isnan(w.X_enc).any()
-        or np.isnan(w.X_dec).any()
-    ):
-        return tso_baseline_predict(df, issue_time).rename("y_lstm_plain")
+    if np.isnan(w.X_enc).any() or np.isnan(w.X_dec).any():
+        return tso_baseline_predict(df, issue_time).rename("y_lstm")
 
     Xe, Xd = bundle.scaler.transform(w.X_enc[None, ...], w.X_dec[None, ...])
     raw = bundle.keras_model.predict([Xe, Xd], verbose=0)
@@ -93,7 +88,18 @@ def lstm_residual_predict(
 
     tso_fc = tso_baseline_predict(df, issue_time)
     pred = tso_fc.to_numpy() + y_resid
-    return pd.Series(pred, index=tso_fc.index, name="y_lstm_plain")
+    name = bundle.meta.get("model", "lstm")
+    return pd.Series(pred, index=tso_fc.index, name=f"y_{name}")
+
+
+def lstm_weather_predict(
+    df: pd.DataFrame,
+    issue_time: pd.Timestamp,
+    *,
+    model_dir: Path | str = DEFAULT_WEATHER_DIR,
+) -> pd.Series:
+    """LSTM trained with NWP weather features; thin wrapper for the CLI."""
+    return lstm_residual_predict(df, issue_time, model_dir=model_dir).rename("y_lstm_weather")
 
 
 def lstm_attention_predict(
@@ -160,8 +166,10 @@ def lstm_attention_explain(
 __all__ = [
     "DEFAULT_ATTENTION_DIR",
     "DEFAULT_MODEL_DIR",
+    "DEFAULT_WEATHER_DIR",
     "LoadedModel",
     "lstm_attention_explain",
     "lstm_attention_predict",
     "lstm_residual_predict",
+    "lstm_weather_predict",
 ]

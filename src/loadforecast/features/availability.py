@@ -12,6 +12,11 @@ column convention is consistent:
     fc_cons__*         — TSO day-ahead consumption forecast (published ~D-1 10:00 CET).
     fc_gen__*          — TSO day-ahead generation forecast (published ~D-1 10:00 CET).
     price__*           — exchange day-ahead clearing prices (published ~D-1 12:45 CET).
+    weather__*         — Open-Meteo NWP forecast at issue time. By construction
+                         (the `historical-forecast` API returns the most recent
+                         issued forecast), values for any timestamp `ts` reflect
+                         a forecast that pre-dates `ts`. We treat them as
+                         "forecast" (visible up to T + 48h).
 
 The forecaster's issue time T is fixed at D-1 12:00 Europe/Berlin.
 
@@ -40,7 +45,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 ACTUAL_PREFIXES = ("actual_cons__", "actual_gen__")
-FORECAST_PREFIXES = ("fc_cons__", "fc_gen__")
+FORECAST_PREFIXES = ("fc_cons__", "fc_gen__", "weather__")
 PRICE_PREFIXES = ("price__",)
 
 

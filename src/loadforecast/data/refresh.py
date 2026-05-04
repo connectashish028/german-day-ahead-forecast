@@ -35,6 +35,7 @@ from .schema import (
     COLUMNS,
     SRC_ENERGY_CHARTS,
     SRC_ENTSOE,
+    SRC_OPEN_METEO,
     SRC_SMARD_API,
     SRC_SMARD_CSV,
     Column,
@@ -42,7 +43,7 @@ from .schema import (
 
 DEFAULT_PARQUET = Path("smard_merged_15min.parquet")
 DEFAULT_START = pd.Timestamp("2022-01-01", tz="UTC")
-SOURCES = (SRC_ENERGY_CHARTS, SRC_SMARD_API, SRC_SMARD_CSV, SRC_ENTSOE)
+SOURCES = (SRC_ENERGY_CHARTS, SRC_SMARD_API, SRC_SMARD_CSV, SRC_OPEN_METEO, SRC_ENTSOE)
 
 # Columns we *must* have (M4 dataset breaks without them).
 REQUIRED = {
@@ -66,6 +67,9 @@ def _load_source(source_name: str):
     if source_name == SRC_ENTSOE:
         from .sources import entsoe
         return entsoe
+    if source_name == SRC_OPEN_METEO:
+        from .sources import open_meteo
+        return open_meteo
     raise ValueError(f"unknown source {source_name}")
 
 
