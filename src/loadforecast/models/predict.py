@@ -21,6 +21,7 @@ from .dataset import FeatureScaler, build_window
 DEFAULT_MODEL_DIR = Path("model_checkpoints/lstm_plain_v1")
 DEFAULT_ATTENTION_DIR = Path("model_checkpoints/lstm_attention_v1")
 DEFAULT_WEATHER_DIR = Path("model_checkpoints/lstm_weather_v1")
+DEFAULT_QUANTILE_DIR = Path("model_checkpoints/lstm_quantile_v1")
 
 
 @dataclass
@@ -102,6 +103,57 @@ def lstm_weather_predict(
     return lstm_residual_predict(df, issue_time, model_dir=model_dir).rename("y_lstm_weather")
 
 
+def lstm_quantile_predict_full(
+    df: pd.DataFrame,
+    issue_time: pd.Timestamp,
+    *,
+    model_dir: Path | str = DEFAULT_QUANTILE_DIR,
+) -> pd.DataFrame:
+    """Probabilistic forecast: returns a DataFrame with columns p10, p50, p90.
+
+    All three are *grid-load* values (TSO baseline + predicted residual quantile).
+    Falls back to a degenerate frame (all three columns = TSO point forecast)
+    if the encoder/decoder window has NaN.
+    """
+    model_dir = Path(model_dir)
+    bundle = _get(model_dir)
+    include_weather = bool(bundle.meta.get("include_weather", True))
+    w = build_window(df, issue_time, include_weather=include_weather)
+    tso_fc = tso_baseline_predict(df, issue_time)
+
+    if np.isnan(w.X_enc).any() or np.isnan(w.X_dec).any():
+        v = tso_fc.to_numpy()
+        return pd.DataFrame(
+            {"p10": v, "p50": v, "p90": v}, index=tso_fc.index,
+        )
+
+    Xe, Xd = bundle.scaler.transform(w.X_enc[None, ...], w.X_dec[None, ...])
+    raw = bundle.keras_model.predict([Xe, Xd], verbose=0)  # (1, 96, 3)
+    y_resid = bundle.scaler.inverse_y(raw[0])              # (96, 3)
+    base = tso_fc.to_numpy()
+    out = pd.DataFrame(
+        {
+            "p10": base + y_resid[:, 0],
+            "p50": base + y_resid[:, 1],
+            "p90": base + y_resid[:, 2],
+        },
+        index=tso_fc.index,
+    )
+    out.index.name = "target_ts"
+    return out
+
+
+def lstm_quantile_predict(
+    df: pd.DataFrame,
+    issue_time: pd.Timestamp,
+    *,
+    model_dir: Path | str = DEFAULT_QUANTILE_DIR,
+) -> pd.Series:
+    """Backtest-harness shim: return the median (p50) as the point forecast."""
+    out = lstm_quantile_predict_full(df, issue_time, model_dir=model_dir)
+    return out["p50"].rename("y_lstm_quantile")
+
+
 def lstm_attention_predict(
     df: pd.DataFrame,
     issue_time: pd.Timestamp,
@@ -166,10 +218,13 @@ def lstm_attention_explain(
 __all__ = [
     "DEFAULT_ATTENTION_DIR",
     "DEFAULT_MODEL_DIR",
+    "DEFAULT_QUANTILE_DIR",
     "DEFAULT_WEATHER_DIR",
     "LoadedModel",
     "lstm_attention_explain",
     "lstm_attention_predict",
+    "lstm_quantile_predict",
+    "lstm_quantile_predict_full",
     "lstm_residual_predict",
     "lstm_weather_predict",
 ]

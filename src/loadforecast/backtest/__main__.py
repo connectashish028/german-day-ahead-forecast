@@ -31,6 +31,11 @@ def _lazy_lstm_weather(df, issue_time):
     return lstm_weather_predict(df, issue_time)
 
 
+def _lazy_lstm_quantile(df, issue_time):
+    from ..models.predict import lstm_quantile_predict
+    return lstm_quantile_predict(df, issue_time)
+
+
 def _resolve_predictor(spec: str):
     if ":" not in spec:
         raise ValueError(f"--predictor must be 'module.path:fn_name', got {spec!r}")
@@ -66,6 +71,7 @@ def main() -> None:
         "lstm_plain": _lazy_lstm_plain,
         "lstm_attention": _lazy_lstm_attention,
         "lstm_weather": _lazy_lstm_weather,
+        "lstm_quantile": _lazy_lstm_quantile,
     }
     if args.predictor in predictors:
         fn = predictors[args.predictor]
