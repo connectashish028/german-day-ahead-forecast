@@ -34,11 +34,13 @@ Thumbs.db
 !smard_merged_15min_head.csv
 
 # Large model artifacts (keep registry pointers, not weights)
-model_checkpoints/*.h5
-model_checkpoints/*.keras
+model_checkpoints/
 mlruns/
 models/production/
 models/candidates/
+
+# Training logs
+logs/
 
 # Outputs
 output/

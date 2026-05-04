@@ -15,6 +15,12 @@ from .harness import quick_backtest
 from .sarimax_baseline import sarimax_residual_predict
 
 
+def _lazy_lstm_plain(df, issue_time):
+    """Defer the heavy TF import until the user actually picks the LSTM."""
+    from ..models.predict import lstm_residual_predict
+    return lstm_residual_predict(df, issue_time)
+
+
 def _resolve_predictor(spec: str):
     if ":" not in spec:
         raise ValueError(f"--predictor must be 'module.path:fn_name', got {spec!r}")
@@ -47,6 +53,7 @@ def main() -> None:
         "tso": tso_baseline_predict,
         "seasonal_naive": seasonal_naive_predict,
         "sarimax_residual": sarimax_residual_predict,
+        "lstm_plain": _lazy_lstm_plain,
     }
     if args.predictor in predictors:
         fn = predictors[args.predictor]
