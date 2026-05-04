@@ -21,6 +21,11 @@ def _lazy_lstm_plain(df, issue_time):
     return lstm_residual_predict(df, issue_time)
 
 
+def _lazy_lstm_attention(df, issue_time):
+    from ..models.predict import lstm_attention_predict
+    return lstm_attention_predict(df, issue_time)
+
+
 def _resolve_predictor(spec: str):
     if ":" not in spec:
         raise ValueError(f"--predictor must be 'module.path:fn_name', got {spec!r}")
@@ -54,6 +59,7 @@ def main() -> None:
         "seasonal_naive": seasonal_naive_predict,
         "sarimax_residual": sarimax_residual_predict,
         "lstm_plain": _lazy_lstm_plain,
+        "lstm_attention": _lazy_lstm_attention,
     }
     if args.predictor in predictors:
         fn = predictors[args.predictor]
