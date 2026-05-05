@@ -75,6 +75,45 @@ different.
   forecasts), Open-Meteo (weather). Idempotent refresh: one CLI command rebuilds
   the parquet from public APIs.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Sources["Public data sources (no auth)"]
+        SMARD[SMARD<br/>load + TSO forecast]
+        EC[Energy-Charts<br/>prices + generation]
+        OM[Open-Meteo<br/>NWP weather]
+    end
+
+    subgraph Pipeline["loadforecast/"]
+        REFRESH[data.refresh<br/>idempotent ingest]
+        PARQUET[(smard_merged_15min<br/>.parquet)]
+        FEATS[features<br/>leakage-safe windowing]
+        LSTM[seq2seq LSTM<br/>P10/P50/P90 heads]
+        BACKTEST[backtest harness<br/>rolling origin]
+    end
+
+    subgraph Surfaces["What people see"]
+        API[FastAPI<br/>/forecast]
+        DASH[Streamlit Cloud<br/>dashboard]
+        CI[GitHub Actions<br/>daily refresh]
+    end
+
+    SMARD --> REFRESH
+    EC --> REFRESH
+    OM --> REFRESH
+    REFRESH --> PARQUET
+    PARQUET --> FEATS
+    FEATS --> LSTM
+    LSTM --> BACKTEST
+    LSTM --> API
+    PARQUET --> DASH
+    LSTM --> DASH
+    CI --> REFRESH
+```
+
+Every prediction respects an **issue-time cutoff of D-1 12:00 Europe/Berlin** (the German day-ahead market gate). A corrupt-future test scrambles every post-issue value in the source frame and asserts feature outputs are bit-identical, so leakage isn't a thing we hope for — it's tested.
+
 ## Repo layout
 
 ```
@@ -143,6 +182,18 @@ python -m loadforecast.backtest --predictor lstm_plain \
   five-variant ladder isolating where the skill comes from. Residual lag is
   +0.139 skill on its own; everything else is incremental on top of that one
   design choice.
+
+## Lessons learned (and a few negative results worth keeping)
+
+Most ML portfolio repos report only the wins. These are the things I tried that *didn't* work, kept anyway, and what they taught me — because a portfolio that admits dead-ends is a stronger signal than one that pretends every step compounded.
+
+- **Attention overfit on this dataset size.** Bahdanau attention on top of the seq2seq LSTM beat the plain version on validation by +0.016 skill, but lost on holdout by **−0.145**. ~1000 training days is too small for the extra parameters; the attention layer learned validation-specific patterns. **Decision: ship the plain LSTM as production, document attention as a tested-and-rejected branch.** ([notebook 05](notebooks/05_attention_visualisation.ipynb))
+- **Adding TSO_fc to the decoder is roughly neutral.** Since the target is `actual − TSO_fc`, the decoder already implicitly depends on TSO_fc. Re-exposing it as a feature gave a holdout delta of −0.008 — within noise, slight overfit risk. **Lesson: residual learning + redundant feature ≠ free signal.** Kept as a deliberate negative result in the [feature ablation](notebooks/08_feature_ablation.ipynb).
+- **Weather's average lift is small (+0.038), and the morning ramp gets *worse* with it.** The marquee story is +0.51 skill on 1 May 2026, but on quiet days weather adds nothing — and on the 7-10 h morning ramp the weather model is mildly worse than no-weather. **Feature value is conditional, not absolute.** The ablation chart shows the average; the [weather notebook](notebooks/06_weather_impact.ipynb) shows the conditional structure.
+- **Volatility-quartile finding flipped my hypothesis.** I expected: "model holds up on extreme-price days while TSO degrades." The data said the opposite — model improvement is *larger* on calm days (+26 %) than on extreme-price days (+12 %). Both methods get harder simultaneously; the model still wins on extremes, just by less. **The honest framing in the dashboard is the rewritten one, not my original hypothesis.**
+- **Capacity isn't the bottleneck — sample count is.** Doubled hidden units once, expecting a free skill bump; got worse holdout numbers. With ~1000 training days, the LSTM(64) is at the right scale; bigger architectures (TFT, Conv-LSTM) were deferred for the same reason attention overfit.
+- **TSO downloadcenter has a ~90-day per-request cap.** Multi-year requests silently return empty — a beautifully wrong default. Found this only when production-shipping; fix is to chunk the request and concatenate. The kind of integration-layer bug a single happy-path smoke test would never catch.
+- **Conformal calibration was deliberately deferred.** Empirical coverage of [P10, P90] is 78.3 %, inside the [78 %, 82 %] gate. Adding split-conformal would push it to a finite-sample-guaranteed 80 %, but the +1.7 pp is invisible to non-stats audiences and re-orders the inference pipeline. **Engineering tradeoff that's bigger than the win.**
 
 ## Data sources
 
