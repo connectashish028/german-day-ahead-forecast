@@ -199,28 +199,11 @@ if tomorrow_fc is None:
     # publishers have even published yet, or the data layer is stale, or
     # something else is wrong with the encoder window.
     if now_berlin < issue_time_today:
-        hours_to_go = (issue_time_today - now_berlin).total_seconds() / 3600
-        st.info(
-            f"**Not yet issued.** Tomorrow ({tomorrow.isoformat()}) is "
-            f"forecast at **{today.isoformat()} 12:00 Berlin** — that's the "
-            f"German day-ahead market gate, when the TSO publishes its "
-            f"forecast and our model takes its snapshot. Right now it's "
-            f"**{now_berlin.strftime('%H:%M')}** Berlin time, "
-            f"~{hours_to_go:.1f}h before issue. Check back after noon."
-        )
+        st.info("**Not yet issued.** Tomorrow is forecast at today 12:00 Berlin. Check back after noon.")
     elif tomorrow > data_max:
-        st.info(
-            f"**Issued, but our data is stale.** The TSO has published "
-            f"tomorrow's forecast but the parquet only runs through "
-            f"{data_max.isoformat()}. The daily refresh job will pick this "
-            f"up at 13:00 CET; locally you can run "
-            f"`python -m loadforecast.data.refresh` to pull it now."
-        )
+        st.info(f"**Data stale.** Parquet runs through {data_max.isoformat()}. Daily refresh runs at 13:00 CET.")
     else:
-        st.warning(
-            "Cannot build a leakage-safe window for tomorrow — encoder or "
-            "decoder has missing values. Most likely an upstream data gap."
-        )
+        st.warning("Encoder/decoder window has missing values — upstream data gap.")
 else:
     st.markdown(
         "The model's view of tomorrow alongside the TSO's published "
