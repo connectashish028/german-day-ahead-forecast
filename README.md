@@ -4,6 +4,12 @@
 > the German grid load at 15-minute resolution and **beats the published TSO
 > forecast by 25.3%** on a stratified 70-date holdout window.
 
+### → Live demo: **[german-load-forecast-v1.streamlit.app](https://german-load-forecast-v1.streamlit.app/)**
+
+Picks tomorrow's German grid-load forecast, side-by-side with the TSO's published baseline, with P10/P90 uncertainty bands. Click any of the case-study days for the marquee outcomes (1 May 2026 PV-glut, etc.).
+
+![Dashboard hero](docs/images/dashboard-hero.png)
+
 | Predictor | MAE (MW) | MAPE (%) | Skill vs TSO |
 |---|---|---|---|
 | Seasonal-naive (D-7 actuals) | 618.3 | 4.21 | −0.256 |
@@ -153,9 +159,10 @@ All data CC-BY 4.0.
 
 Active development, building milestone-by-milestone with verification gates. Priority items:
 
+- **Daily GitHub Action** — cron at 13:00 CET refreshes the parquet from SMARD/Open-Meteo/Energy-Charts and commits it back; the deployed dashboard auto-redeploys, so tomorrow's forecast is always fresh without human intervention.
+- **Cross-border price features** — 14 neighbour bidding zones already in the parquet; threading them into the windowing pipeline is the next obvious ablation lever.
 - **Conformal calibration** — split-conformal wrapper to upgrade the empirical 78 % interval coverage to a finite-sample-guaranteed 80 %.
-- **Cross-border price features** — 14 neighbour bidding zones already in the parquet; threading them into the windowing pipeline is the obvious next ablation lever.
-- **Production deployment** — FastAPI inference endpoint, GitHub Actions daily refresh (auto-pull TSO forecast from SMARD downloadcenter), Streamlit dashboard with rolling skill-vs-TSO chart.
+- **Weekly retrain workflow** — refit on the latest data, promote the new model only if it beats the current production model on a 4-week holdout window.
 
 ## License
 
