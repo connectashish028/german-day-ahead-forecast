@@ -323,8 +323,10 @@ else:
 
     if actuals is not None and actuals.notna().any():
         tso_full = df[TSO_COL].reindex(target_idx)
-        model_mae = float(np.abs(actuals.values - forecast["p50"].values).mean())
-        tso_mae = float(np.abs(actuals.values - tso_full.values).mean())
+        # nanmean: today's actuals end mid-day (late hours not yet realised);
+        # we still want a partial-day stat for the hours we do have.
+        model_mae = float(np.nanmean(np.abs(actuals.values - forecast["p50"].values)))
+        tso_mae = float(np.nanmean(np.abs(actuals.values - tso_full.values)))
         improvement = (
             (1 - model_mae / tso_mae) * 100 if tso_mae > 0 else float("nan")
         )
