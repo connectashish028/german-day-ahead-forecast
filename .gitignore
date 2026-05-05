@@ -35,6 +35,10 @@ Thumbs.db
 !smard_merged_15min.parquet
 *.csv
 !smard_merged_15min_head.csv
+# Dashboard reads these at runtime — keep tracked so the deployed app
+# can render the hour-profile, rolling-skill, volatility, and ablation charts.
+!backtest_results/lstm_weather_step7.csv
+!backtest_results/ablation_summary.csv
 
 # Model artifacts — only the deployed model is committed; experiments stay local.
 model_checkpoints/*
