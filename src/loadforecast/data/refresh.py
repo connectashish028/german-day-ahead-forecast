@@ -121,8 +121,13 @@ def refresh(
             start = DEFAULT_START
         else:
             existing_end = _existing_end(parquet_path)
-            # Re-fetch the last 24h to absorb any late corrections.
-            start = (existing_end - pd.Timedelta(hours=24)).floor("15min")
+            # Re-fetch the last 24h to absorb any late corrections — but
+            # never start in the future. The parquet's index can legitimately
+            # extend past "now" (TSO publishes day-ahead forecasts for
+            # tomorrow), so a naive `existing_end - 24h` can put `start`
+            # ahead of real time, leaving every source with nothing to fetch.
+            now = pd.Timestamp(datetime.now(UTC)).floor("15min")
+            start = (min(existing_end, now) - pd.Timedelta(hours=24)).floor("15min")
 
     print(f"Refresh window: {start}  ->  {through}")
     print(f"{len(COLUMNS)} columns across {len(SOURCES)} sources.\n")
@@ -142,6 +147,16 @@ def refresh(
         raise RuntimeError("No columns fetched successfully.")
 
     fresh_df = pd.concat(series_by_col.values(), axis=1)
+    if fresh_df.empty:
+        # Nothing new fetched (e.g. start was already past every source's
+        # publication frontier). Leave the existing parquet untouched.
+        existing_rows = pd.read_parquet(parquet_path) if parquet_path.exists() else None
+        n = len(existing_rows) if existing_rows is not None else 0
+        print(f"\nNo fresh rows in [{start}, {through}). Parquet unchanged ({n} rows).")
+        return {
+            "rows": n, "columns": existing_rows.shape[1] if existing_rows is not None else 0,
+            "errors": errors, "missing_required": [], "parquet_path": parquet_path,
+        }
     fresh_df.index = fresh_df.index.tz_convert("UTC")
     fresh_df.index.name = "timestamp"
 
