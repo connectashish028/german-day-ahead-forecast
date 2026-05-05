@@ -101,7 +101,7 @@ st.markdown(
     f"""
     <div class="hero-bar">
         <div class="hero-brand">German Day-Ahead Load Forecast</div>
-        <div class="hero-badge">25 % lower error than TSO</div>
+        <div class="hero-badge">20 % lower error than TSO</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -126,7 +126,7 @@ st.markdown(
     every utility, trader, and balancing party anchors on. This model uses
     weather, calendar, and recent-error patterns to predict where the
     operator's forecast will be wrong, and corrects it. **Across the
-    14-month holdout window, it cuts the average forecast error by 25 %.**
+    14-month holdout window, it cuts the average forecast error by 20 %.**
     """
 )
 
@@ -138,15 +138,15 @@ st.markdown(
     <div class="stat-grid">
         <div class="stat-cell">
             <div class="stat-label">Avg error reduction</div>
-            <div class="stat-value">25.3<span class="stat-unit">%</span></div>
+            <div class="stat-value">20.1<span class="stat-unit">%</span></div>
         </div>
         <div class="stat-cell">
             <div class="stat-label">Mean error</div>
-            <div class="stat-value">368<span class="stat-unit">MW</span></div>
+            <div class="stat-value">393<span class="stat-unit">MW</span></div>
         </div>
         <div class="stat-cell">
             <div class="stat-label">Mean % error</div>
-            <div class="stat-value">2.56<span class="stat-unit">%</span></div>
+            <div class="stat-value">2.72<span class="stat-unit">%</span></div>
         </div>
         <div class="stat-cell">
             <div class="stat-label">80 % band hit rate</div>
