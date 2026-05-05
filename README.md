@@ -1,4 +1,4 @@
-# ⚡ Day-Ahead German Load Forecasting — Beating the TSO Baseline
+# Day-Ahead German Load Forecasting — Beating the TSO Baseline
 
 > A neural network that predicts Germany's electricity demand for tomorrow,
 > trained on public data and measured directly against the grid operator's
@@ -31,7 +31,7 @@ This project trains a TensorFlow model on the same public data and measures itse
 
 *Tested over 70 delivery dates spanning Jan 2025 to Apr 2026.*
 
-**Where the weather signal pays off most.** On 1 May 2026 — federal holiday, clear sky, record 54 GW solar peak, prices crashing to **−500 €/MWh** — the TSO badly under-forecast midday demand (1180 MW average error). Our weather-aware model cut that error in half (582 MW, **+51 % improvement on the day**). The +3.8 pp average lift is a blend of "calm days where weather adds nothing" and "extreme weather days where weather is the entire story."
+**Where the weather signal pays off most.** On 1 May 2026 — federal holiday, clear sky, record 54 GW solar peak, prices crashing to **−500 €/MWh** — the TSO badly under-forecast midday demand (1180 MW average error). The model cut that to 715 MW — a **+39 % improvement on the day**, vs the +25 % long-run average. Days like this are where the weather signal earns its keep; on calmer days it adds little, but the average lift across the test window blends both.
 
 ### Where the improvement comes from
 
@@ -128,9 +128,6 @@ All data is licensed CC-BY 4.0.
 ## What's next
 
 - **Daily GitHub Action** — refreshes the parquet and re-renders tomorrow's PNG every day at 13:00 CET, so the dashboard is always current without human intervention.
-- **Cross-border price features** — 14 neighbour bidding zones already in the parquet; threading them into the windowing pipeline is the next obvious feature ablation.
-- **Conformal calibration** — split-conformal wrapper to upgrade the empirical 78 % uncertainty-band coverage to a finite-sample-guaranteed 80 %.
-- **Weekly retrain** — refit on the latest data, promote the new model only if it beats the current production model on a 4-week holdout window.
 
 ## License
 
