@@ -112,7 +112,7 @@ st.markdown(
     f'<p style="color: rgba(255,255,255,0.5); font-family: \'JetBrains Mono\', monospace; '
     f'font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase; '
     f'margin-top: 0.25rem;">Backtest 2025-01 → 2026-04 · n = 70 days · '
-    f'data through {data_max.isoformat()} · model: lstm_quantile_v1</p>',
+    f'data through {data_max.isoformat()} · model: Probabilistic LoadCast v1</p>',
     unsafe_allow_html=True,
 )
 

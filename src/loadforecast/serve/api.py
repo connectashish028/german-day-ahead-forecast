@@ -149,7 +149,7 @@ def forecast(req: ForecastRequest) -> ForecastResponse:
     return ForecastResponse(
         delivery_date=req.delivery_date,
         issue_time=issue.to_pydatetime(),
-        model="lstm_quantile_v1",
+        model="Probabilistic LoadCast v1",
         n_steps=len(horizons),
         horizons=horizons,
     )

@@ -1,0 +1,18 @@
+# Pinned for Streamlit Cloud deployment of dashboards/app.py.
+# Subset of pyproject.toml — only the runtime deps the dashboard needs.
+# (No mlflow, evidently, entsoe-py, statsmodels — those are training/research only.)
+
+tensorflow==2.16.2
+numpy>=1.26,<2.0
+pandas>=2.2,<2.3
+pyarrow>=15.0
+scikit-learn>=1.4,<1.6
+scipy>=1.11
+holidays>=0.50
+requests>=2.32
+python-dateutil>=2.9
+pytz>=2024.1
+pydantic>=2.7
+streamlit>=1.36
+plotly>=5.22
+tqdm>=4.66

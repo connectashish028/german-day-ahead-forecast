@@ -28,13 +28,17 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Project data — regeneratable from smard_client.py
+# Project data — regeneratable from data.refresh, but the canonical
+# parquet is committed so the deployed dashboard has data without a
+# cold-start API fetch.
 *.parquet
+!smard_merged_15min.parquet
 *.csv
 !smard_merged_15min_head.csv
 
-# Large model artifacts (keep registry pointers, not weights)
-model_checkpoints/
+# Model artifacts — only the deployed model is committed; experiments stay local.
+model_checkpoints/*
+!model_checkpoints/lstm_quantile_v1/
 mlruns/
 models/production/
 models/candidates/
