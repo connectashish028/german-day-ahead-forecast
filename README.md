@@ -10,6 +10,10 @@ Picks tomorrow's German grid-load forecast, side-by-side with the TSO's publishe
 
 ![Dashboard hero](docs/images/dashboard-hero.png)
 
+**Tomorrow's forecast** (auto-rendered by the daily refresh job — model in lilac, TSO baseline dashed, P10/P90 ribbon shaded):
+
+![Tomorrow's forecast](docs/images/tomorrow.png)
+
 | Predictor | MAE (MW) | MAPE (%) | Skill vs TSO |
 |---|---|---|---|
 | Seasonal-naive (D-7 actuals) | 618.3 | 4.21 | −0.256 |
