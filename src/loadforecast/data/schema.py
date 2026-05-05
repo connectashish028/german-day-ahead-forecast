@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 SRC_ENERGY_CHARTS = "energy_charts"
 SRC_SMARD_API = "smard_api"
 SRC_SMARD_CSV = "smard_csv"
+SRC_SMARD_DOWNLOADCENTER = "smard_downloadcenter"
 SRC_ENTSOE = "entsoe"
 SRC_OPEN_METEO = "open_meteo"
 
@@ -112,11 +113,13 @@ def _build_columns() -> list[Column]:
         fetch_kwargs={"filter_id": 4359, "region": "DE-LU"},
     ))
 
-    # 4. TSO load + generation forecasts — SMARD CSV download (manual until ENTSO-E).
+    # 4. TSO load + generation forecasts.
+    # Consumption forecasts via SMARD downloadcenter JSON API (auto-fetch);
+    # generation forecasts still via manual CSV (model doesn't use them).
     for suffix in ("grid_load", "residual_load"):
         cols.append(Column(
             name=f"fc_cons__{suffix}",
-            source=SRC_SMARD_CSV,
+            source=SRC_SMARD_DOWNLOADCENTER,
             description=f"Day-ahead {suffix} forecast (TSO baseline), MW",
         ))
     for suffix in ("total", "photovoltaics_and_wind", "wind_offshore",
@@ -163,5 +166,6 @@ __all__ = [
     "SRC_OPEN_METEO",
     "SRC_SMARD_API",
     "SRC_SMARD_CSV",
+    "SRC_SMARD_DOWNLOADCENTER",
     "columns_by_source",
 ]
