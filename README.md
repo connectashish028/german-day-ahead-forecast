@@ -21,22 +21,7 @@ Every European grid operator publishes a forecast of how much electricity the co
 
 This project trains a TensorFlow model on the same public data and measures itself directly against that published forecast. Most machine-learning portfolio projects compare a model to a naive baseline and stop there. Beating a real, public, *operational* forecast — and being able to point to the live numbers — is a qualitatively different signal.
 
-| Predictor | Avg error (MW) | Avg % error | Improvement vs TSO |
-|---|---|---|---|
-| Seasonal-naive (last week, same hour) | 618.3 | 4.21 % | −25.6 % |
-| **TSO baseline** (`fc_cons__grid_load`) | **492.4** | **3.36 %** | 0 % |
-| SARIMAX on residual | 441.7 | 3.00 % | +10.3 % |
-| Plain seq2seq LSTM | 386.7 | 2.66 % | +21.5 % |
-| LSTM + weather features (point-forecast variant) | 367.8 | 2.56 % | +25.3 % |
-| **Quantile LSTM with P10 / P50 / P90 bands (deployed)** | **393.2** | **2.72 %** | **+20.1 %** |
 
-*Tested over 70 delivery dates spanning Jan 2025 to Apr 2026. We trained
-both variants — the point-forecast version is more accurate at the
-median (+25.3 %), the quantile version trades ~5 pp of that accuracy
-for explicit P10/P90 uncertainty bands. The dashboard ships the
-quantile version because the bands are operationally useful.*
-
-**Where the weather signal pays off most.** On 1 May 2026 — federal holiday, clear sky, record 54 GW solar peak, prices crashing to **−500 €/MWh** — the TSO badly under-forecast midday demand (1180 MW average error). The model cut that to 715 MW — a **+39 % improvement on the day**, vs the +20 % long-run average. Days like this are where the weather signal earns its keep; on calmer days it adds little, but the average lift across the test window blends both.
 
 ### Where the improvement comes from
 

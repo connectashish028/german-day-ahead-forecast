@@ -259,11 +259,13 @@ st.markdown(
     "forecast. Issue time is D-1 12:00 Europe/Berlin."
 )
 
-# Default to tomorrow if reachable, else the latest day with full coverage.
-if tomorrow <= data_max:
-    default_day = tomorrow
-else:
-    default_day = data_max - timedelta(days=1)
+# Default to yesterday — usually has complete actuals for model-vs-actual
+# comparison. Fall back to data_max if yesterday is somehow outside range.
+default_day = today - timedelta(days=1)
+if default_day > data_max:
+    default_day = data_max
+if default_day < data_min + timedelta(days=8):
+    default_day = data_min + timedelta(days=8)
 if "picked_date" not in st.session_state:
     st.session_state.picked_date = default_day
 

@@ -69,18 +69,22 @@ def forecast_chart(
     """
     fig = go.Figure()
 
+    # X-axis in Berlin local time (the operational tz for the German grid),
+    # so a "tomorrow" chart spans 00:00 → 24:00 instead of weird UTC offsets.
+    x_fc = forecast.index.tz_convert("Europe/Berlin")
+
     # P10 / P90 ribbon — pure visual; skipped from hover so the unified
     # tooltip only shows the lines users actually care about. Give them
     # explicit names to prevent Plotly's `tonexty` fill from injecting
     # an "undefined" legend entry.
     fig.add_trace(go.Scatter(
-        x=forecast.index, y=forecast["p90"], mode="lines",
+        x=x_fc, y=forecast["p90"], mode="lines",
         line=dict(color=PREDICTION, width=0.5, dash="dot"),
         name="p90_band", legendgroup="band",
         hoverinfo="skip", showlegend=False,
     ))
     fig.add_trace(go.Scatter(
-        x=forecast.index, y=forecast["p10"], mode="lines",
+        x=x_fc, y=forecast["p10"], mode="lines",
         line=dict(color=PREDICTION, width=0.5, dash="dot"),
         fill="tonexty", fillcolor=PREDICTION_FILL,
         name="p10_band", legendgroup="band",
@@ -88,7 +92,7 @@ def forecast_chart(
     ))
     # Median (the headline line)
     fig.add_trace(go.Scatter(
-        x=forecast.index, y=forecast["p50"], mode="lines",
+        x=x_fc, y=forecast["p50"], mode="lines",
         line=dict(color=PREDICTION, width=2.2),
         name="Model forecast",
         hovertemplate="%{y:,.0f}<extra>Model</extra>",
@@ -96,7 +100,7 @@ def forecast_chart(
 
     if tso is not None:
         fig.add_trace(go.Scatter(
-            x=tso.index, y=tso.values, mode="lines",
+            x=tso.index.tz_convert("Europe/Berlin"), y=tso.values, mode="lines",
             line=dict(color=TSO, width=1.4, dash="dash"),
             name="TSO baseline",
             hovertemplate="%{y:,.0f}<extra>TSO</extra>",
@@ -104,7 +108,8 @@ def forecast_chart(
 
     if actuals is not None and actuals.notna().any():
         fig.add_trace(go.Scatter(
-            x=actuals.index, y=actuals.values, mode="lines",
+            x=actuals.index.tz_convert("Europe/Berlin"),
+            y=actuals.values, mode="lines",
             line=dict(color=ACTUAL, width=2.2),
             name="Actual load",
             hovertemplate="%{y:,.0f}<extra>Actual</extra>",
@@ -112,7 +117,7 @@ def forecast_chart(
 
     layout = _base_layout(title=title, height=440)
     layout["yaxis"] = {**_AXIS, "title": "Load (MWh / 15-min)"}
-    layout["xaxis"] = {**_AXIS, "title": "Time (UTC)"}
+    layout["xaxis"] = {**_AXIS, "title": "Time (Berlin)"}
     layout["hovermode"] = "x unified"
     fig.update_layout(**layout)
     return fig
@@ -156,18 +161,19 @@ def error_chart(
     """
     model_err = forecast["p50"].values - actuals.values
     tso_err = tso.values - actuals.values
+    x_berlin = actuals.index.tz_convert("Europe/Berlin")
 
     fig = go.Figure()
     fig.add_hline(y=0, line=dict(color=TEXT_30, width=1, dash="dot"))
 
     fig.add_trace(go.Scatter(
-        x=actuals.index, y=tso_err, mode="lines",
+        x=x_berlin, y=tso_err, mode="lines",
         line=dict(color=TSO, width=1.4, dash="dash"),
         name="TSO error",
         hovertemplate="%{y:+,.0f}<extra>TSO error</extra>",
     ))
     fig.add_trace(go.Scatter(
-        x=actuals.index, y=model_err, mode="lines",
+        x=x_berlin, y=model_err, mode="lines",
         line=dict(color=PREDICTION, width=2.0),
         name="Model error",
         hovertemplate="%{y:+,.0f}<extra>Model error</extra>",
@@ -176,7 +182,7 @@ def error_chart(
     layout = _base_layout(title=title, height=240)
     layout["yaxis"] = {**_AXIS, "title": "Error (forecast − actual)",
                        "tickformat": "+.0f"}
-    layout["xaxis"] = {**_AXIS, "title": "Time (UTC)"}
+    layout["xaxis"] = {**_AXIS, "title": "Time (Berlin)"}
     layout["hovermode"] = "x unified"
     fig.update_layout(**layout)
     return fig
