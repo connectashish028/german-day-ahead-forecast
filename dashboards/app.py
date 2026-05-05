@@ -247,7 +247,7 @@ else:
 st.markdown("## Forecast explorer")
 st.markdown(
     "Pick any delivery day in the available range — or jump straight to "
-    "one of the marquee case-study days below. Lilac line is the model's "
+    "one of the extreme days below. Lilac line is the model's "
     "median forecast with the P10/P90 ribbon; blue is the realised load "
     "(when the day is past); dashed white is the TSO's published "
     "forecast. Issue time is D-1 12:00 Europe/Berlin."
