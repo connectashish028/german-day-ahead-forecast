@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -161,8 +161,11 @@ st.markdown(
 # --- Tomorrow's forecast (hero, live) ------------------------------------
 
 # Use Berlin local date so "today" stays correct on a UTC-hosted server.
-today = datetime.now(ZoneInfo("Europe/Berlin")).date()
+BERLIN = ZoneInfo("Europe/Berlin")
+now_berlin = datetime.now(BERLIN)
+today = now_berlin.date()
 tomorrow = today + timedelta(days=1)
+issue_time_today = datetime.combine(today, time(12, 0), tzinfo=BERLIN)
 
 
 @st.cache_data(show_spinner="Forecasting tomorrow…")
@@ -192,12 +195,32 @@ st.markdown(
 )
 
 if tomorrow_fc is None:
-    st.info(
-        f"Tomorrow's forecast ({tomorrow.isoformat()}) isn't yet available — "
-        f"the parquet currently runs through {data_max.isoformat()}. "
-        "Run `python -m loadforecast.data.refresh` to pull the latest TSO "
-        "publication for tomorrow."
-    )
+    # Why isn't it available? The right message depends on whether the
+    # publishers have even published yet, or the data layer is stale, or
+    # something else is wrong with the encoder window.
+    if now_berlin < issue_time_today:
+        hours_to_go = (issue_time_today - now_berlin).total_seconds() / 3600
+        st.info(
+            f"**Not yet issued.** Tomorrow ({tomorrow.isoformat()}) is "
+            f"forecast at **{today.isoformat()} 12:00 Berlin** — that's the "
+            f"German day-ahead market gate, when the TSO publishes its "
+            f"forecast and our model takes its snapshot. Right now it's "
+            f"**{now_berlin.strftime('%H:%M')}** Berlin time, "
+            f"~{hours_to_go:.1f}h before issue. Check back after noon."
+        )
+    elif tomorrow > data_max:
+        st.info(
+            f"**Issued, but our data is stale.** The TSO has published "
+            f"tomorrow's forecast but the parquet only runs through "
+            f"{data_max.isoformat()}. The daily refresh job will pick this "
+            f"up at 13:00 CET; locally you can run "
+            f"`python -m loadforecast.data.refresh` to pull it now."
+        )
+    else:
+        st.warning(
+            "Cannot build a leakage-safe window for tomorrow — encoder or "
+            "decoder has missing values. Most likely an upstream data gap."
+        )
 else:
     st.markdown(
         "The model's view of tomorrow alongside the TSO's published "
