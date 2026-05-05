@@ -25,6 +25,9 @@ import requests
 
 URL = "https://www.smard.de/nip-download-manager/nip/download/market-data"
 TIMEOUT = 60
+# SMARD's downloadcenter caps each request at ~90 days. A multi-year fetch
+# silently returns an empty body, so we chunk anything bigger than this.
+MAX_CHUNK_DAYS = 90
 
 # Schema column name -> SMARD module ID.
 MODULE_IDS: dict[str, int] = {
@@ -53,30 +56,67 @@ def _request(module_id: int, start: pd.Timestamp, end: pd.Timestamp, region: str
     return r.text
 
 
-@lru_cache(maxsize=32)
-def _fetch_cached(module_id: int, start_iso: str, end_iso: str, region: str) -> pd.DataFrame:
-    start = pd.Timestamp(start_iso)
-    end = pd.Timestamp(end_iso)
-    body = _request(module_id, start, end, region)
-    # Response is English-locale CSV: comma=thousands, dot=decimal.
-    # Encoding is utf-8-sig (leading BOM); skip blank lines between rows.
+def _parse_chunk(body: str) -> pd.DataFrame:
+    """Parse one CSV response into a tz-aware UTC-indexed frame.
+
+    Note: SMARD encodes unpublished forecast slots as ``-`` (a single
+    hyphen). Mixed with thousand-separated numerics like ``11,667.99``,
+    pandas leaves the value column as object dtype, and a naive
+    `pd.to_numeric` returns all-NaN. We strip the placeholders and the
+    thousands separators explicitly here so downstream code gets clean
+    floats.
+    """
     df = pd.read_csv(
-        io.StringIO(body), sep=";", decimal=".", thousands=",",
-        encoding="utf-8", skip_blank_lines=True,
+        io.StringIO(body), sep=";",
+        encoding="utf-8", skip_blank_lines=True, dtype=str,
     )
     df.columns = df.columns.str.strip().str.lstrip("﻿")
+    if df.empty or "Start date" not in df.columns:
+        return pd.DataFrame()
+
+    ts = pd.to_datetime(df["Start date"], errors="coerce")
+    df = df[ts.notna()].copy()
+    ts = ts.dropna()
     if df.empty:
         return df
 
-    # Berlin-local timestamps like "Apr 1, 2026 2:00 AM". Single-digit days
-    # mean format= without zero-pad on Windows; let pandas infer instead.
-    ts = pd.to_datetime(df["Start date"], errors="coerce")
+    # Coerce every value column to float, handling "-" sentinels and the
+    # English thousand-separator format SMARD uses.
+    for col in df.columns:
+        if col in ("Start date", "End date"):
+            continue
+        s = df[col].astype(str).str.strip()
+        s = s.where(s != "-", "")
+        s = s.str.replace(",", "", regex=False)
+        df[col] = pd.to_numeric(s, errors="coerce")
+
     ts = ts.dt.tz_localize(
         "Europe/Berlin", ambiguous="infer", nonexistent="shift_forward",
     )
     df.index = ts.dt.tz_convert("UTC")
     df.index.name = "timestamp"
     return df.sort_index()
+
+
+@lru_cache(maxsize=64)
+def _fetch_cached(module_id: int, start_iso: str, end_iso: str, region: str) -> pd.DataFrame:
+    """Fetch [start, end) in MAX_CHUNK_DAYS-sized chunks and concat."""
+    start = pd.Timestamp(start_iso)
+    end = pd.Timestamp(end_iso)
+    chunks: list[pd.DataFrame] = []
+    cursor = start
+    while cursor < end:
+        chunk_end = min(cursor + pd.Timedelta(days=MAX_CHUNK_DAYS), end)
+        body = _request(module_id, cursor, chunk_end, region)
+        chunk = _parse_chunk(body)
+        if not chunk.empty:
+            chunks.append(chunk)
+        cursor = chunk_end
+    if not chunks:
+        return pd.DataFrame()
+    out = pd.concat(chunks, axis=0)
+    out = out[~out.index.duplicated(keep="last")].sort_index()
+    return out
 
 
 def fetch(column, start: pd.Timestamp, end: pd.Timestamp) -> pd.Series:

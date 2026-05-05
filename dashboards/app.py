@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -80,7 +81,10 @@ styles.inject(st)
 
 @st.cache_resource(show_spinner="Loading data…")
 def load_data() -> pd.DataFrame:
-    return load_smard_15min(str(PARQUET))
+    df = load_smard_15min(str(PARQUET))
+    # Defensive: a stray NaT in the index (e.g. from a malformed source row)
+    # would propagate NaT into df.index.max() and break date comparisons.
+    return df[df.index.notna()].sort_index()
 
 
 df = load_data()
@@ -151,6 +155,90 @@ st.markdown(
 )
 
 
+# --- Tomorrow's forecast (hero, live) ------------------------------------
+
+# Use Berlin local date so "today" stays correct on a UTC-hosted server.
+today = datetime.now(ZoneInfo("Europe/Berlin")).date()
+tomorrow = today + timedelta(days=1)
+
+
+@st.cache_data(show_spinner="Forecasting tomorrow…")
+def predict_for_day(delivery_date: date) -> pd.DataFrame | None:
+    issue = issue_time_for(delivery_date)
+    if issue > df.index.max():
+        return None
+    out = lstm_quantile_predict_full(df, issue)
+    if out["p50"].isna().any():
+        return None
+    return out
+
+
+tomorrow_fc = predict_for_day(tomorrow) if tomorrow <= data_max else None
+tomorrow_tso = (
+    df[TSO_COL].reindex(tomorrow_fc.index)
+    if (tomorrow_fc is not None and TSO_COL in df.columns) else None
+)
+
+st.markdown(
+    f"## Tomorrow's forecast"
+    f"<span style='font-family:\"JetBrains Mono\",monospace; font-size:0.8rem; "
+    f"letter-spacing:0.1em; color:rgba(255,255,255,0.5); margin-left:0.75rem;'>"
+    f"DELIVERY {tomorrow.isoformat()} · issued {today.isoformat()} 12:00 Berlin"
+    f"</span>",
+    unsafe_allow_html=True,
+)
+
+if tomorrow_fc is None:
+    st.info(
+        f"Tomorrow's forecast ({tomorrow.isoformat()}) isn't yet available — "
+        f"the parquet currently runs through {data_max.isoformat()}. "
+        "Run `python -m loadforecast.data.refresh` to pull the latest TSO "
+        "publication for tomorrow."
+    )
+else:
+    st.markdown(
+        "The model's view of tomorrow alongside the TSO's published "
+        "forecast. No actuals yet — that's the point. Where the lilac "
+        "and the dashed-white diverge is where the model thinks the "
+        "operator's forecast will be off."
+    )
+    st.plotly_chart(
+        charts.forecast_chart(tomorrow_fc, tso=tomorrow_tso, actuals=None),
+        use_container_width=True,
+        config={"displaylogo": False},
+        key="chart_tomorrow_hero",
+    )
+
+    # Disagreement summary — peak load and average difference.
+    if tomorrow_tso is not None and tomorrow_tso.notna().any():
+        model_peak = float(tomorrow_fc["p50"].max())
+        tso_peak = float(tomorrow_tso.max())
+        peak_diff_pct = (model_peak - tso_peak) / tso_peak * 100
+        avg_diff_mw = float(np.abs(tomorrow_fc["p50"].values
+                                   - tomorrow_tso.values).mean())
+        avg_diff_pct = avg_diff_mw / float(np.abs(tomorrow_tso).mean()) * 100
+        peak_arrow = "↑" if peak_diff_pct > 0 else "↓"
+        st.markdown(
+            f"""
+            <div class="stat-grid" style="grid-template-columns: repeat(3, 1fr);">
+                <div class="stat-cell">
+                    <div class="stat-label">Model peak (P50)</div>
+                    <div class="stat-value">{model_peak:,.0f}<span class="stat-unit">MWh/QH</span></div>
+                </div>
+                <div class="stat-cell">
+                    <div class="stat-label">TSO peak</div>
+                    <div class="stat-value">{tso_peak:,.0f}<span class="stat-unit">MWh/QH</span></div>
+                </div>
+                <div class="stat-cell">
+                    <div class="stat-label">Avg disagreement</div>
+                    <div class="stat-value">{avg_diff_pct:.1f}<span class="stat-unit">% &nbsp;({peak_arrow}{abs(peak_diff_pct):.1f}% at peak)</span></div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
 # --- Forecast explorer --------------------------------------------------
 
 st.markdown("## Forecast explorer")
@@ -162,7 +250,11 @@ st.markdown(
     "forecast. Issue time is D-1 12:00 Europe/Berlin."
 )
 
-default_day = min(data_max - timedelta(days=1), date(2026, 4, 30))
+# Default to tomorrow if reachable, else the latest day with full coverage.
+if tomorrow <= data_max:
+    default_day = tomorrow
+else:
+    default_day = data_max - timedelta(days=1)
 if "picked_date" not in st.session_state:
     st.session_state.picked_date = default_day
 
@@ -197,18 +289,7 @@ with col_tso:
     show_tso = st.checkbox("Show TSO baseline", value=True)
 
 
-@st.cache_data(show_spinner="Running model…")
-def predict_day(delivery_date: date) -> pd.DataFrame | None:
-    issue = issue_time_for(delivery_date)
-    if issue > df.index.max():
-        return None
-    out = lstm_quantile_predict_full(df, issue)
-    if out["p50"].isna().any():
-        return None
-    return out
-
-
-forecast = predict_day(picked)
+forecast = predict_for_day(picked)
 
 if forecast is None:
     st.warning(
@@ -227,7 +308,9 @@ else:
     )
 
     fig = charts.forecast_chart(forecast, actuals=actuals, tso=tso)
-    st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displaylogo": False},
+                    key="chart_explorer")
 
     if actuals is not None and actuals.notna().any():
         tso_full = df[TSO_COL].reindex(target_idx)
@@ -266,6 +349,7 @@ else:
             charts.error_chart(actuals, forecast, tso_full),
             use_container_width=True,
             config={"displaylogo": False},
+            key="chart_explorer_error",
         )
 
 
@@ -302,6 +386,7 @@ else:
         charts.hour_profile_chart(bt),
         use_container_width=True,
         config={"displaylogo": False},
+        key="chart_hour_profile",
     )
 
 
@@ -341,6 +426,7 @@ if roll is not None and not roll.empty:
     st.plotly_chart(
         charts.skill_chart(roll), use_container_width=True,
         config={"displaylogo": False},
+        key="chart_rolling_skill",
     )
 
 
@@ -411,6 +497,7 @@ if vq is not None and not vq.empty:
         charts.volatility_quartile_chart(vq),
         use_container_width=True,
         config={"displaylogo": False},
+        key="chart_volatility",
     )
 
     rows = []
@@ -457,6 +544,7 @@ if abl is not None and not abl.empty:
         charts.ablation_chart(abl),
         use_container_width=True,
         config={"displaylogo": False},
+        key="chart_ablation",
     )
 
 

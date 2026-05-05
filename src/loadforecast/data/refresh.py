@@ -108,7 +108,14 @@ def refresh(
     that failed), parquet_path.
     """
     if through is None:
-        through = pd.Timestamp(datetime.now(UTC)).floor("15min")
+        # Push 2 days past "now" so day-ahead publications (TSO forecast,
+        # weather NWP) for tomorrow's delivery day are captured. Sources
+        # return NaN for columns that don't extend into the future
+        # (e.g. actual load), which is exactly what we want.
+        through = (
+            pd.Timestamp(datetime.now(UTC)).floor("15min")
+            + pd.Timedelta(days=2)
+        )
     if start is None:
         if rebuild or not parquet_path.exists():
             start = DEFAULT_START
