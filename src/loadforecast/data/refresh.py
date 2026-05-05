@@ -88,8 +88,10 @@ def fetch_column(column: Column, start: pd.Timestamp, end: pd.Timestamp) -> pd.S
 def _existing_end(parquet_path: Path) -> pd.Timestamp | None:
     if not parquet_path.exists():
         return None
+    # `columns=[]` returns a 0-column frame which `.empty` flags True even
+    # when there are millions of index rows. Check the index directly.
     df = pd.read_parquet(parquet_path, columns=[])
-    if df.empty:
+    if len(df.index) == 0:
         return None
     return df.index.max()
 
@@ -121,13 +123,16 @@ def refresh(
             start = DEFAULT_START
         else:
             existing_end = _existing_end(parquet_path)
-            # Re-fetch the last 24h to absorb any late corrections — but
-            # never start in the future. The parquet's index can legitimately
-            # extend past "now" (TSO publishes day-ahead forecasts for
-            # tomorrow), so a naive `existing_end - 24h` can put `start`
-            # ahead of real time, leaving every source with nothing to fetch.
-            now = pd.Timestamp(datetime.now(UTC)).floor("15min")
-            start = (min(existing_end, now) - pd.Timedelta(hours=24)).floor("15min")
+            if existing_end is None:
+                start = DEFAULT_START
+            else:
+                # Re-fetch the last 24h to absorb late corrections — but
+                # never start in the future. The parquet's index can
+                # legitimately extend past "now" (TSO publishes day-ahead
+                # forecasts for tomorrow), so a naive `existing_end - 24h`
+                # can leave every source with nothing to fetch.
+                now = pd.Timestamp(datetime.now(UTC)).floor("15min")
+                start = (min(existing_end, now) - pd.Timedelta(hours=24)).floor("15min")
 
     print(f"Refresh window: {start}  ->  {through}")
     print(f"{len(COLUMNS)} columns across {len(SOURCES)} sources.\n")
