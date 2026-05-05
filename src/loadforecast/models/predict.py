@@ -59,6 +59,25 @@ def _get(model_dir: Path) -> LoadedModel:
     return _CACHE[key]
 
 
+# Real-world data has occasional small gaps (an Open-Meteo hour drops out,
+# a price publication is briefly delayed). A strict NaN check killed the
+# whole forecast for ~0.2 % of cells; fill column-wise instead so the model
+# still runs. If the gap is so large that ffill+bfill leaves NaN, only then
+# fall back to TSO.
+def _fill_small_gaps(arr: np.ndarray, max_nan_frac: float = 0.05) -> np.ndarray | None:
+    """Forward-then-back-fill along the time axis. Returns None if too many
+    NaNs to be plausibly imputable, or any column is all-NaN."""
+    if not np.isnan(arr).any():
+        return arr
+    nan_frac = float(np.isnan(arr).mean())
+    if nan_frac > max_nan_frac:
+        return None
+    filled = pd.DataFrame(arr).ffill().bfill().to_numpy()
+    if np.isnan(filled).any():
+        return None
+    return filled
+
+
 def lstm_residual_predict(
     df: pd.DataFrame,
     issue_time: pd.Timestamp,
@@ -77,10 +96,12 @@ def lstm_residual_predict(
     include_weather = bool(bundle.meta.get("include_weather", False))
     w = build_window(df, issue_time, include_weather=include_weather)
 
-    if np.isnan(w.X_enc).any() or np.isnan(w.X_dec).any():
+    enc = _fill_small_gaps(w.X_enc)
+    dec = _fill_small_gaps(w.X_dec)
+    if enc is None or dec is None:
         return tso_baseline_predict(df, issue_time).rename("y_lstm")
 
-    Xe, Xd = bundle.scaler.transform(w.X_enc[None, ...], w.X_dec[None, ...])
+    Xe, Xd = bundle.scaler.transform(enc[None, ...], dec[None, ...])
     raw = bundle.keras_model.predict([Xe, Xd], verbose=0)
     # Plain model returns a single tensor; older multi-output trainings
     # may have returned a dict — handle both for forward compatibility.
@@ -121,13 +142,15 @@ def lstm_quantile_predict_full(
     w = build_window(df, issue_time, include_weather=include_weather)
     tso_fc = tso_baseline_predict(df, issue_time)
 
-    if np.isnan(w.X_enc).any() or np.isnan(w.X_dec).any():
+    enc = _fill_small_gaps(w.X_enc)
+    dec = _fill_small_gaps(w.X_dec)
+    if enc is None or dec is None:
         v = tso_fc.to_numpy()
         return pd.DataFrame(
             {"p10": v, "p50": v, "p90": v}, index=tso_fc.index,
         )
 
-    Xe, Xd = bundle.scaler.transform(w.X_enc[None, ...], w.X_dec[None, ...])
+    Xe, Xd = bundle.scaler.transform(enc[None, ...], dec[None, ...])
     raw = bundle.keras_model.predict([Xe, Xd], verbose=0)  # (1, 96, 3)
     y_resid = bundle.scaler.inverse_y(raw[0])              # (96, 3)
     base = tso_fc.to_numpy()
