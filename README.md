@@ -22,6 +22,20 @@ midday consumption (1180 MW MAE). Our weather-aware LSTM cut that error in half
 "calm days where weather adds nothing" and "extreme weather days where weather is
 the entire story." See `notebooks/06_weather_impact.ipynb`.
 
+### Where the skill comes from — feature ablation
+
+Five LSTM variants, each adding one feature group on top of the previous, all scored on the same 70-date holdout:
+
+| Variant | Holdout skill | Δ vs prev |
+|---|---|---|
+| Calendar only (hour/dow/holiday) | +0.047 | — |
+| + Load history in encoder | +0.097 | +0.050 |
+| **+ Residual lag** (`actual − TSO_fc` history) | **+0.237** | **+0.139** ⭐ |
+| + TSO_fc in decoder | +0.229 | −0.008 |
+| + NWP weather (4 vars) | +0.242 | +0.014 |
+
+The residual-lag feature alone buys ~57 % of the project's total skill. Showing the LSTM the recent `actual − TSO` error lets it learn the *systematic* bias the TSO under-specifies. Adding TSO_fc to the decoder is roughly neutral — a worthwhile **negative result** since the target is already `actual − TSO_fc`, the decoder doesn't need it twice. See `notebooks/08_feature_ablation.ipynb`.
+
 ## Why this project
 
 Every European TSO publishes a day-ahead grid-load forecast — in Germany it lives on
@@ -65,7 +79,7 @@ src/loadforecast/
   backtest/    # rolling-origin evaluator + TSO + SARIMAX baselines
   serve/       # FastAPI inference service (M10)
 tests/         # pytest — 31 tests including 24 leakage tests
-notebooks/     # 4 visualisation + explanation notebooks
+notebooks/     # 8 visualisation + explanation notebooks
 scripts/       # training, refresh, exploration utilities
 ```
 
@@ -116,6 +130,13 @@ python -m loadforecast.backtest --predictor lstm_plain \
   where the NWP signal pays off (afternoon/evening peaks), where it doesn't
   (morning ramp), and the 1 May 2026 PV-glut case study where weather cuts
   the TSO error in half.
+- **[07 – Quantile uncertainty](notebooks/07_quantile_uncertainty.ipynb)** —
+  P10/P50/P90 quantile heads with pinball loss. 78.3 % empirical coverage on
+  the holdout (gate [78%, 82%]), 1280 MW mean interval width, 0 % crossings.
+- **[08 – Feature ablation](notebooks/08_feature_ablation.ipynb)** —
+  five-variant ladder isolating where the skill comes from. Residual lag is
+  +0.139 skill on its own; everything else is incremental on top of that one
+  design choice.
 
 ## Data sources
 
@@ -132,9 +153,9 @@ All data CC-BY 4.0.
 
 Active development, building milestone-by-milestone with verification gates. Priority items:
 
-- **NWP weather features** (Open-Meteo) — main remaining skill headroom; the model currently has no idea whether tomorrow is sunny.
-- **Probabilistic outputs** — quantile heads (P10/P50/P90) with split-conformal calibration for guaranteed empirical coverage.
-- **Production deployment** — FastAPI inference endpoint, GitHub Actions daily refresh, Streamlit dashboard with rolling skill-vs-TSO chart.
+- **Conformal calibration** — split-conformal wrapper to upgrade the empirical 78 % interval coverage to a finite-sample-guaranteed 80 %.
+- **Cross-border price features** — 14 neighbour bidding zones already in the parquet; threading them into the windowing pipeline is the obvious next ablation lever.
+- **Production deployment** — FastAPI inference endpoint, GitHub Actions daily refresh (auto-pull TSO forecast from SMARD downloadcenter), Streamlit dashboard with rolling skill-vs-TSO chart.
 
 ## License
 
