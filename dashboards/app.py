@@ -36,8 +36,11 @@ import streamlit as st
 _HERE = Path(__file__).resolve().parent
 ROOT = _HERE.parent if (_HERE.parent / "pyproject.toml").exists() else _HERE
 os.chdir(ROOT)
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# `loadforecast` lives under src/, `dashboards` under repo root.
+# Streamlit Cloud doesn't run `pip install -e .`, so add both explicitly.
+for path in (ROOT, ROOT / "src"):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 from loadforecast.backtest import issue_time_for, load_smard_15min  # noqa: E402
 from loadforecast.models.predict import lstm_quantile_predict_full  # noqa: E402
