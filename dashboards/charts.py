@@ -182,4 +182,151 @@ def error_chart(
     return fig
 
 
-__all__ = ["forecast_chart", "skill_chart", "error_chart"]
+def ablation_chart(ablation: pd.DataFrame, title: str | None = None) -> go.Figure:
+    """Marginal-skill bar chart from the M4-pt3 ablation.
+
+    `ablation` must have a `label` column (variant name) and `holdout_skill`
+    column. We compute first-difference deltas and color positive bars in
+    lilac, negative in dimmed white.
+    """
+    df = ablation.copy()
+    df["delta"] = df["holdout_skill"].diff().fillna(df["holdout_skill"])
+    colors = [
+        PREDICTION if v > 0 else TSO
+        for v in df["delta"]
+    ]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=df["label"], y=df["delta"] * 100,
+        marker=dict(color=colors,
+                    line=dict(color=BORDER, width=1)),
+        text=[f"{v*100:+.1f}%" for v in df["delta"]],
+        textposition="outside",
+        textfont=dict(family="JetBrains Mono, monospace", color=TEXT, size=11),
+        hovertemplate="<b>%{x}</b><br>marginal Δ: %{y:+.1f}%<extra></extra>",
+    ))
+    layout = _base_layout(title=title, height=360)
+    layout["yaxis"] = {**_AXIS, "tickformat": "+.0f", "ticksuffix": " %",
+                       "title": "Marginal error reduction"}
+    layout["xaxis"] = {**_AXIS, "title": ""}
+    layout["showlegend"] = False
+    layout["margin"] = dict(l=50, r=20, t=40 if title else 30, b=60)
+    fig.update_layout(**layout)
+    return fig
+
+
+def hour_profile_chart(
+    backtest: pd.DataFrame,
+    title: str | None = None,
+) -> go.Figure:
+    """Average absolute error by hour-of-day, model vs TSO.
+
+    `backtest` must have columns y_true, y_model, y_tso, target_ts (UTC).
+    We aggregate to local Berlin hour because that's the unit users feel.
+    """
+    df = backtest.copy()
+    df["target_ts"] = pd.to_datetime(df["target_ts"], utc=True)
+    df["hour"] = df["target_ts"].dt.tz_convert("Europe/Berlin").dt.hour
+    df["err_model"] = (df["y_true"] - df["y_model"]).abs()
+    df["err_tso"] = (df["y_true"] - df["y_tso"]).abs()
+    profile = df.groupby("hour")[["err_model", "err_tso"]].mean()
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=profile.index, y=profile["err_tso"], mode="lines",
+        line=dict(color=TSO, width=1.6, dash="dash"),
+        name="TSO baseline",
+        hovertemplate="hour %{x}: TSO err %{y:,.0f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=profile.index, y=profile["err_model"], mode="lines",
+        line=dict(color=PREDICTION, width=2.2),
+        fill="tonexty", fillcolor=PREDICTION_FILL,
+        name="Model",
+        hovertemplate="hour %{x}: model err %{y:,.0f}<extra></extra>",
+    ))
+    layout = _base_layout(title=title, height=320)
+    layout["xaxis"] = {**_AXIS, "title": "Hour of day (Berlin local)",
+                       "dtick": 3, "tickmode": "linear"}
+    layout["yaxis"] = {**_AXIS, "title": "Mean absolute error (MWh / 15-min)"}
+    layout["hovermode"] = "x unified"
+    fig.update_layout(**layout)
+    return fig
+
+
+def volatility_quartile_chart(
+    quartiles: pd.DataFrame,
+    title: str | None = None,
+) -> go.Figure:
+    """Paired bars: mean daily MAE for model vs TSO, by price-spread quartile.
+
+    `quartiles` must have columns:
+      - `label`     ('Calm', 'Moderate', 'High', 'Extreme')
+      - `range`     human-readable spread range, used as the secondary axis
+      - `mae_model`, `mae_tso`  mean daily MAE in MWh / 15-min
+      - `n_days`    sample size in that bin
+
+    Visual treatment:
+      - Model bars: solid lilac fill
+      - TSO bars:   transparent fill with white-dashed border (mirrors
+                    the line-chart convention)
+    """
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=quartiles["label"], y=quartiles["mae_tso"],
+        name="TSO baseline",
+        marker=dict(color="rgba(0,0,0,0)",
+                    line=dict(color=TSO, width=1.5)),
+        text=[f"{v:.0f}" for v in quartiles["mae_tso"]],
+        textposition="outside",
+        textfont=dict(family="JetBrains Mono, monospace",
+                      color=TEXT_70, size=11),
+        hovertemplate=(
+            "<b>%{x}</b><br>"
+            "TSO mean MAE %{y:,.0f}<extra></extra>"
+        ),
+    ))
+    fig.add_trace(go.Bar(
+        x=quartiles["label"], y=quartiles["mae_model"],
+        name="Model",
+        marker=dict(color=PREDICTION,
+                    line=dict(color=PREDICTION, width=0)),
+        text=[f"{v:.0f}" for v in quartiles["mae_model"]],
+        textposition="outside",
+        textfont=dict(family="JetBrains Mono, monospace",
+                      color=TEXT, size=11),
+        hovertemplate=(
+            "<b>%{x}</b><br>"
+            "model mean MAE %{y:,.0f}<extra></extra>"
+        ),
+    ))
+
+    # Range subtitles printed below each bar group as a second tick row.
+    range_text = [f"{r}<br>n={n}"
+                  for r, n in zip(quartiles["range"], quartiles["n_days"],
+                                  strict=True)]
+
+    layout = _base_layout(title=title, height=380)
+    layout["barmode"] = "group"
+    layout["bargap"] = 0.45
+    layout["bargroupgap"] = 0.08
+    layout["xaxis"] = {
+        **_AXIS,
+        "title": "",
+        "tickmode": "array",
+        "tickvals": list(quartiles["label"]),
+        "ticktext": [f"{lbl}<br><span style='color:rgba(255,255,255,0.4); "
+                     f"font-size:10px;'>{txt}</span>"
+                     for lbl, txt in zip(quartiles["label"], range_text,
+                                         strict=True)],
+    }
+    layout["yaxis"] = {**_AXIS,
+                       "title": "Mean daily MAE (MWh / 15-min)"}
+    layout["margin"] = dict(l=50, r=20, t=40 if title else 30, b=80)
+    fig.update_layout(**layout)
+    return fig
+
+
+__all__ = ["forecast_chart", "skill_chart", "error_chart",
+           "ablation_chart", "hour_profile_chart",
+           "volatility_quartile_chart"]

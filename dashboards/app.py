@@ -8,12 +8,15 @@ Single scrollable page, xAI-inspired dark theme. Two accent colors only:
 - blue  (#3B82F6) — actual realised load (when known)
 - TSO baseline rendered as dimmed white-dashed.
 
-Pages:
-1. Hero stats — headline numbers, jump-out result.
-2. Forecast explorer — pick any delivery date in coverage, see model
-   vs TSO vs actual (if past), with P10/P90 uncertainty ribbon.
-3. Rolling skill — 30-day rolling MAE skill vs TSO over the holdout.
-4. Methodology footer — short, links to repo and key notebooks.
+Sections, top → bottom:
+1. Hero result — headline numbers, plain-English framing.
+2. Forecast explorer — date picker + notable-days quick-pick + chart +
+   per-day stats + signed-error chart.
+3. Hour-of-day error profile — where the model wins, by hour.
+4. Error reduction over time — 30-day rolling vs TSO.
+5. Volatility quartiles — how the model holds up as price spread grows.
+6. Feature ablation — where the error reduction comes from.
+7. Methodology — short, links to repo and data source.
 """
 from __future__ import annotations
 
@@ -42,6 +45,24 @@ from dashboards import charts, styles  # noqa: E402
 PARQUET = ROOT / "smard_merged_15min.parquet"
 ACTUAL_COL = "actual_cons__grid_load"
 TSO_COL = "fc_cons__grid_load"
+ABLATION_CSV = ROOT / "backtest_results" / "ablation_summary.csv"
+WEATHER_BACKTEST_CSV = ROOT / "backtest_results" / "lstm_weather_step7.csv"
+
+# Curated case-study dates — the most narrative-rich days in the holdout.
+NOTABLE_DAYS = [
+    (date(2026, 5, 1),
+     "1 May 2026 — PV record",
+     "Federal holiday + 54 GW PV peak; prices crashed to −500 €/MWh. "
+     "TSO badly under-forecast; weather model cut error in half."),
+    (date(2025, 12, 25),
+     "Christmas Day 2025",
+     "Holiday demand pattern — TSO baselines tend to over-forecast "
+     "industrial load on bank holidays."),
+    (date(2025, 8, 12),
+     "Heatwave 12 Aug 2025",
+     "Peak summer demand; cooling load spikes that the climatological "
+     "TSO baseline doesn't anticipate."),
+]
 
 
 # --- Page setup ---------------------------------------------------------
@@ -87,7 +108,7 @@ st.markdown(
     f'<p style="color: rgba(255,255,255,0.5); font-family: \'JetBrains Mono\', monospace; '
     f'font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase; '
     f'margin-top: 0.25rem;">Backtest 2025-01 → 2026-04 · n = 70 days · '
-    f'data through {data_max.isoformat()}</p>',
+    f'data through {data_max.isoformat()} · model: lstm_quantile_v1</p>',
     unsafe_allow_html=True,
 )
 
@@ -134,19 +155,38 @@ st.markdown(
 
 st.markdown("## Forecast explorer")
 st.markdown(
-    "Pick any delivery day in the available range. The lilac line is "
-    "the model's median forecast with the P10/P90 ribbon; the blue line "
-    "is the realised load (when the day is in the past); the dashed white "
-    "line is the TSO's published forecast. Issue time is the day before "
-    "at 12:00 Europe/Berlin."
+    "Pick any delivery day in the available range — or jump straight to "
+    "one of the marquee case-study days below. Lilac line is the model's "
+    "median forecast with the P10/P90 ribbon; blue is the realised load "
+    "(when the day is past); dashed white is the TSO's published "
+    "forecast. Issue time is D-1 12:00 Europe/Berlin."
 )
+
+default_day = min(data_max - timedelta(days=1), date(2026, 4, 30))
+if "picked_date" not in st.session_state:
+    st.session_state.picked_date = default_day
+
+st.markdown(
+    '<div style="font-family:\'JetBrains Mono\',monospace; font-size:0.7rem; '
+    'letter-spacing:0.12em; text-transform:uppercase; color:rgba(255,255,255,0.5); '
+    'margin: 1rem 0 0.5rem 0;">Notable days</div>',
+    unsafe_allow_html=True,
+)
+cols = st.columns(len(NOTABLE_DAYS))
+for col, (d, label, tooltip) in zip(cols, NOTABLE_DAYS, strict=True):
+    with col:
+        if st.button(label, key=f"notable_{d}", help=tooltip,
+                     use_container_width=True):
+            if data_min + timedelta(days=8) <= d <= data_max:
+                st.session_state.picked_date = d
+            else:
+                st.warning(f"{d} is outside the data window.")
 
 col_date, col_actual, col_tso = st.columns([2, 1, 1])
 with col_date:
-    default_day = min(data_max - timedelta(days=1), date(2026, 4, 30))
     picked = st.date_input(
         "Delivery date",
-        value=default_day,
+        key="picked_date",
         min_value=data_min + timedelta(days=8),
         max_value=data_max,
         help="The day to forecast. Issue time is D-1 12:00 Berlin.",
@@ -189,7 +229,6 @@ else:
     fig = charts.forecast_chart(forecast, actuals=actuals, tso=tso)
     st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
 
-    # Day-level summary stats + error chart — only when actuals are available.
     if actuals is not None and actuals.notna().any():
         tso_full = df[TSO_COL].reindex(target_idx)
         model_mae = float(np.abs(actuals.values - forecast["p50"].values).mean())
@@ -230,6 +269,42 @@ else:
         )
 
 
+# --- Hour-of-day error profile ------------------------------------------
+
+st.markdown("## Where the model wins, by hour of day")
+st.markdown(
+    "Average forecast error at each hour, aggregated across the entire "
+    "70-day holdout. The dashed white line is the TSO baseline; the lilac "
+    "line is the model. The shaded gap below the TSO line is the lift the "
+    "model provides — concentrated in the morning ramp (5–9 h) and the "
+    "afternoon peak (16–20 h), where the TSO baseline systematically "
+    "mis-predicts."
+)
+
+
+@st.cache_data
+def load_weather_backtest() -> pd.DataFrame | None:
+    if not WEATHER_BACKTEST_CSV.exists():
+        return None
+    return pd.read_csv(WEATHER_BACKTEST_CSV)
+
+
+bt = load_weather_backtest()
+if bt is None or bt.empty:
+    st.info(
+        "Backtest CSV not found — run "
+        "`python -m loadforecast.backtest --predictor lstm_weather "
+        "--start 2025-01-01 --end 2026-04-30 --step-days 7 "
+        "--out backtest_results/lstm_weather_step7.csv` to populate."
+    )
+else:
+    st.plotly_chart(
+        charts.hour_profile_chart(bt),
+        use_container_width=True,
+        config={"displaylogo": False},
+    )
+
+
 # --- Rolling skill chart ------------------------------------------------
 
 st.markdown("## Error reduction over time")
@@ -243,15 +318,9 @@ st.markdown(
 
 @st.cache_data
 def rolling_skill() -> pd.DataFrame | None:
-    """Read the canonical backtest CSV and compute 30-day rolling skill.
-
-    Falls back to a stub frame if the CSV isn't present yet (e.g. fresh
-    clone before any backtests have run).
-    """
-    csv = ROOT / "backtest_results" / "lstm_weather_step7.csv"
-    if not csv.exists():
+    if not WEATHER_BACKTEST_CSV.exists():
         return None
-    df_bt = pd.read_csv(csv, parse_dates=["target_ts"])
+    df_bt = pd.read_csv(WEATHER_BACKTEST_CSV, parse_dates=["target_ts"])
     daily = (
         df_bt.assign(
             issue_date=pd.to_datetime(df_bt["issue_date"]),
@@ -268,16 +337,125 @@ def rolling_skill() -> pd.DataFrame | None:
 
 
 roll = rolling_skill()
-if roll is None or roll.empty:
-    st.info(
-        "Backtest CSV not found — run "
-        "`python -m loadforecast.backtest --predictor lstm_weather "
-        "--start 2025-01-01 --end 2026-04-30 --step-days 7 "
-        "--out backtest_results/lstm_weather_step7.csv` to populate."
-    )
-else:
+if roll is not None and not roll.empty:
     st.plotly_chart(
         charts.skill_chart(roll), use_container_width=True,
+        config={"displaylogo": False},
+    )
+
+
+# --- Volatility quartile bars -------------------------------------------
+
+st.markdown("## How the model holds up as price volatility grows")
+st.markdown(
+    "Each delivery day is binned by its **intra-day price spread** "
+    "(`max − min` of the day-ahead price within the day) — a proxy for "
+    "how unusual that day's net-load shape was. Calm days are flat; "
+    "extreme days have a wide spread, often driven by mid-day "
+    "renewables gluts or scarcity peaks. Bars show the **mean daily "
+    "forecast error** for each quartile."
+)
+
+
+@st.cache_data
+def volatility_quartiles() -> pd.DataFrame | None:
+    if not WEATHER_BACKTEST_CSV.exists():
+        return None
+    bt_local = pd.read_csv(WEATHER_BACKTEST_CSV, parse_dates=["target_ts"])
+    bt_local["target_ts"] = pd.to_datetime(bt_local["target_ts"], utc=True)
+
+    price_col = "price__germany_luxembourg"
+    if price_col not in df.columns:
+        return None
+    bt_local["price"] = df[price_col].reindex(bt_local["target_ts"]).values
+
+    daily = bt_local.groupby("issue_date").agg(
+        mae_model=("y_true",
+                   lambda s: float(np.abs(
+                       s - bt_local.loc[s.index, "y_model"]).mean())),
+        mae_tso=("y_true",
+                 lambda s: float(np.abs(
+                     s - bt_local.loc[s.index, "y_tso"]).mean())),
+        price_max=("price", "max"),
+        price_min=("price", "min"),
+    ).reset_index()
+    daily["price_spread"] = daily["price_max"] - daily["price_min"]
+    daily = daily.dropna(subset=["price_spread"])
+    if daily.empty:
+        return None
+
+    daily["bin"] = pd.qcut(
+        daily["price_spread"], q=4,
+        labels=["Calm", "Moderate", "High", "Extreme"],
+    )
+    grouped = (
+        daily.groupby("bin", observed=True).agg(
+            mae_model=("mae_model", "mean"),
+            mae_tso=("mae_tso", "mean"),
+            n_days=("issue_date", "count"),
+            spread_lo=("price_spread", "min"),
+            spread_hi=("price_spread", "max"),
+        )
+        .reset_index()
+        .rename(columns={"bin": "label"})
+    )
+    grouped["range"] = grouped.apply(
+        lambda r: f"{r.spread_lo:,.0f}–{r.spread_hi:,.0f} €", axis=1,
+    )
+    return grouped
+
+
+vq = volatility_quartiles()
+if vq is not None and not vq.empty:
+    st.plotly_chart(
+        charts.volatility_quartile_chart(vq),
+        use_container_width=True,
+        config={"displaylogo": False},
+    )
+
+    rows = []
+    for _, r in vq.iterrows():
+        improvement = (1 - r["mae_model"] / r["mae_tso"]) * 100
+        rows.append(f"<b>{r['label']}</b>: {improvement:+.1f} %")
+    st.markdown(
+        f"""
+        <div style="font-family:'JetBrains Mono',monospace; font-size:0.8rem;
+                    color:rgba(255,255,255,0.7); margin-top:0.5rem;
+                    display:flex; gap:1.5rem; flex-wrap:wrap;">
+            <span style="color:rgba(255,255,255,0.5);">
+                Error reduction by quartile —</span>
+            {' · '.join(rows)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# --- Feature ablation ---------------------------------------------------
+
+st.markdown("## Where the error reduction comes from")
+st.markdown(
+    "Five LSTM variants, each adding one feature group on top of the "
+    "previous, scored on the same 70-day holdout. The bars show the "
+    "**marginal improvement** each group buys. Showing the model the "
+    "recent `actual − TSO` error pattern alone accounts for roughly 57 % "
+    "of the total improvement — a clean confirmation of the residual-"
+    "learning design choice."
+)
+
+
+@st.cache_data
+def load_ablation() -> pd.DataFrame | None:
+    if not ABLATION_CSV.exists():
+        return None
+    return pd.read_csv(ABLATION_CSV)
+
+
+abl = load_ablation()
+if abl is not None and not abl.empty:
+    st.plotly_chart(
+        charts.ablation_chart(abl),
+        use_container_width=True,
         config={"displaylogo": False},
     )
 
