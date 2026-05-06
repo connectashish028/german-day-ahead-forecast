@@ -1,5 +1,7 @@
 # Day-Ahead German Load Forecasting — Beating the TSO Baseline
 
+[![Daily refresh](https://github.com/connectashish028/german-load-forecast/actions/workflows/daily_refresh.yml/badge.svg)](https://github.com/connectashish028/german-load-forecast/actions/workflows/daily_refresh.yml)
+
 > A neural network that predicts Germany's electricity demand for tomorrow,
 > trained on public data and measured directly against the grid operator's
 > own forecast. Across 14 months of testing the deployed model cuts the
@@ -59,6 +61,8 @@ flowchart LR
 
 Every prediction respects an **issue-time cutoff of 12:00 Berlin time on the day before delivery** — the German day-ahead market gate. A "corrupt-future" test scrambles every post-cutoff value in the source data and asserts the resulting features are byte-for-byte identical, so leakage isn't a thing we hope for, it's tested.
 
+A **GitHub Action** runs the refresh + tomorrow-PNG render every day at 13:00 CET. The deployed Streamlit dashboard auto-redeploys on every commit, so the live forecast is always current with no human intervention.
+
 ## Approach
 
 - **Residual learning.** Instead of predicting load directly, the model predicts the *operator's error* — `actual − TSO_forecast` — and applies the correction. The operator already nails the easy 90 % (calendar, climatology); the model only has to learn the systematic remainder.
@@ -117,7 +121,9 @@ All data is licensed CC-BY 4.0.
 
 ## What's next
 
-- **Daily GitHub Action** — refreshes the parquet and re-renders tomorrow's PNG every day at 13:00 CET, so the dashboard is always current without human intervention.
+- **Cross-border price features** — 14 neighbour bidding zones already in the parquet; threading them into the windowing pipeline is the next obvious feature ablation.
+- **Conformal calibration** — split-conformal wrapper to upgrade the empirical 78 % uncertainty-band coverage to a finite-sample-guaranteed 80 %.
+- **Weekly retrain** — refit on the latest data, promote the new model only if it beats the current production model on a 4-week holdout window.
 
 ## License
 

@@ -1,0 +1,83 @@
+# Daily refresh: pull the latest SMARD / Open-Meteo / Energy-Charts data,
+# re-render tomorrow's forecast PNG, commit + push if anything changed.
+#
+# Streamlit Cloud auto-redeploys on every push to main, so this is what
+# keeps the live dashboard current with no human intervention.
+#
+# Tradeoff note: we commit the ~20 MB parquet daily. At portfolio scale
+# the bloat is invisible (recruiters don't pull full git history); at
+# production scale we'd push the parquet to S3 + DVC instead. Picking
+# simplicity here is intentional.
+
+name: Daily refresh
+
+on:
+  schedule:
+    # 11:00 UTC = 13:00 CEST in summer / 12:00 CET in winter — comfortably
+    # past the TSO's day-ahead publication around 10:00 CET.
+    - cron: "0 11 * * *"
+  workflow_dispatch:  # allow manual trigger from the Actions tab
+
+permissions:
+  contents: write  # needs to commit the refreshed parquet back
+
+concurrency:
+  group: daily-refresh
+  cancel-in-progress: false  # don't kill a running job if a manual one starts
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Refresh data (skip cleanly if no new rows)
+        id: refresh
+        run: |
+          set +e
+          python -m loadforecast.data.refresh --fail-if-no-new-rows
+          rc=$?
+          set -e
+          if [ $rc -eq 2 ]; then
+            echo "no_new_data=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::No new rows — skipping render and commit."
+            exit 0
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "::error::data.refresh exited with code $rc"
+            exit $rc
+          fi
+          echo "no_new_data=false" >> "$GITHUB_OUTPUT"
+
+      - name: Render tomorrow's forecast PNG
+        if: steps.refresh.outputs.no_new_data != 'true'
+        run: python scripts/render_tomorrow.py
+        continue-on-error: true  # if TSO hasn't published tomorrow yet,
+                                 # don't fail the whole workflow.
+
+      - name: Commit and push if changed
+        if: steps.refresh.outputs.no_new_data != 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add smard_merged_15min.parquet docs/images/tomorrow.png
+          if git diff --cached --quiet; then
+            echo "::notice::No staged changes after refresh — nothing to commit."
+            exit 0
+          fi
+          git commit -m "Daily refresh: $(date -u +%Y-%m-%d)"
+          git push
