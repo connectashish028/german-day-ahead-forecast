@@ -1,6 +1,6 @@
 """Battery-dispatch P&L simulation — what's a price forecast worth in €?
 
-Operational framing — what a trading desk would actually do at SUENA:
+Operational framing — what a trading desk would actually do:
 
 - Battery: 10 MW / 20 MWh, 90 % round-trip efficiency, max 3 cycles/day
   → 3 × 20 MWh = 60 MWh charge throughput per day
