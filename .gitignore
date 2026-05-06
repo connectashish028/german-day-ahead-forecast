@@ -40,6 +40,7 @@ Thumbs.db
 !backtest_results/lstm_weather_step7.csv
 !backtest_results/ablation_summary.csv
 !backtest_results/price_quantile_holdout.csv
+!backtest_results/battery_pnl_daily.csv
 
 # Model artifacts — only the deployed models are committed; experiments stay local.
 model_checkpoints/*
