@@ -45,7 +45,7 @@ Thumbs.db
 # Model artifacts — only the deployed models are committed; experiments stay local.
 model_checkpoints/*
 !model_checkpoints/lstm_quantile_v1/
-!model_checkpoints/price_quantile_v3/
+!model_checkpoints/price_quantile_v4/
 mlruns/
 models/production/
 models/candidates/

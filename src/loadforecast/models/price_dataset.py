@@ -56,6 +56,8 @@ PRICE_DEC_FEATURE_NAMES = (
     "tso_load_fc",
     "tso_vre_fc",            # SMARD day-ahead PV+wind forecast (the dominant price driver).
     "tso_vre_fc_present",    # 1 if SMARD has published it for this delivery day, 0 otherwise.
+    "vre_to_load_ratio",     # fc_gen / fc_load — the mechanistic price driver.
+    "vre_percentile",        # fc_gen / 90d-rolling-q90(fc_gen) — "is this a top-1% PV day?"
     "hour_sin", "hour_cos", "dow_sin", "dow_cos",
     "is_federal_holiday",
 )
@@ -133,8 +135,27 @@ def build_price_window(
     vre_fc_d = masked[TSO_VRE_FC].reindex(target_idx).to_numpy()
     vre_present_d = (~np.isnan(vre_fc_d)).astype(np.float32)
     vre_fc_d = np.nan_to_num(vre_fc_d, nan=0.0)
+
+    # Mechanistic features for price extremes (M9). Both engineered to
+    # be safe under VRE-missing: when fc_gen is imputed to 0, the ratio
+    # and percentile are 0 too — augmented training teaches the model
+    # to ignore them in degraded mode (the present flag is the gate).
+    safe_load = np.where(tso_d > 0, tso_d, 1.0)
+    vre_to_load_ratio = vre_fc_d / safe_load
+
+    # vre_percentile uses the 90-day rolling q90 of fc_gen evaluated at
+    # issue_time T (no leakage — only past data). Single scalar denom
+    # per delivery day; "1.0" means a typical-PV day, ">1" means above.
+    ref_window = df[TSO_VRE_FC].loc[
+        issue_time - pd.Timedelta(days=90): issue_time
+    ].dropna()
+    q90 = float(ref_window.quantile(0.90)) if len(ref_window) > 100 else 1.0
+    vre_percentile = vre_fc_d / max(q90, 1.0)
+
     dec_stack = [
         tso_d, vre_fc_d, vre_present_d,
+        vre_to_load_ratio.astype(np.float32),
+        vre_percentile.astype(np.float32),
         cal_dec["hour_sin"].to_numpy(),
         cal_dec["hour_cos"].to_numpy(),
         cal_dec["dow_sin"].to_numpy(),

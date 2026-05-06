@@ -19,6 +19,9 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+
+import holidays as hols
 
 from loadforecast.backtest import issue_time_for, load_smard_15min
 from loadforecast.models.dataset import FeatureScaler
@@ -33,8 +36,22 @@ from loadforecast.models.price_dataset import (
     build_price_dataset,
 )
 
+
+def _sample_weight(issue_time, federal_holidays) -> float:
+    """Per-window weight: 0.5× for 2022-2023 (recovered tail data,
+    down-weighted to avoid spike domination), 3× for federal holidays
+    and Sundays (the rare regime that blew up on May 1, 2026)."""
+    delivery_local = (issue_time.tz_convert("Europe/Berlin").normalize()
+                       + pd.Timedelta(days=1))
+    w = 1.0
+    if delivery_local.year in (2022, 2023):
+        w *= WEIGHT_OLD_YEARS
+    if delivery_local.weekday() == 6 or delivery_local.date() in federal_holidays:
+        w *= WEIGHT_HOLIDAY_OR_SUN
+    return w
+
 PARQUET = "smard_merged_15min.parquet"
-OUT_DIR = Path("model_checkpoints/price_quantile_v3")
+OUT_DIR = Path("model_checkpoints/price_quantile_v4")
 
 # Feature-dropout augmentation: fraction of training windows where we mask
 # tso_vre_fc (set to 0 + present-flag to 0). Teaches the model to handle
@@ -42,8 +59,19 @@ OUT_DIR = Path("model_checkpoints/price_quantile_v3")
 # the production-grade pattern. Tuned conservatively at 30 %; higher
 # (~50 %) trades full-feature accuracy for robustness.
 VRE_DROPOUT_FRAC = 0.30
-VRE_FC_COL_IDX = 1   # index of tso_vre_fc in the decoder feature stack
-VRE_PRESENT_COL_IDX = 2  # index of tso_vre_fc_present
+# Decoder feature indices (must match PRICE_DEC_FEATURE_NAMES order).
+VRE_FC_COL_IDX = 1   # tso_vre_fc
+VRE_PRESENT_COL_IDX = 2  # tso_vre_fc_present
+VRE_RATIO_COL_IDX = 3    # vre_to_load_ratio (engineered, derives from tso_vre_fc)
+VRE_PCTILE_COL_IDX = 4   # vre_percentile    (engineered, derives from tso_vre_fc)
+
+# M9: sample weighting strategy. We re-include 2022-2023 to recover the
+# negative-price events that v3's 2024+ window cut out, but down-weight
+# them to avoid being dominated by 2022's €500 spike outliers. We also
+# upweight federal holidays + Sundays — that's exactly the regime that
+# blew up on May 1, 2026 (federal holiday + 54 GW PV record → −500 €/MWh).
+WEIGHT_OLD_YEARS = 0.5     # multiplier for 2022-2023 windows
+WEIGHT_HOLIDAY_OR_SUN = 3.0  # multiplier for federal holidays + Sundays
 
 
 def _drange(start: date, end: date, step: int = 1):
@@ -57,8 +85,11 @@ def main() -> None:
     print("Loading parquet...")
     df = load_smard_15min(PARQUET)
 
-    # Splits — see notebook 09 section 3 for justification.
-    train_dates = [issue_time_for(d) for d in _drange(date(2024, 1, 8),  date(2025, 12, 31))]
+    # M9: extend train window back to 2022-01-08. v3 cut at 2024 to avoid
+    # the 2022 €500 spike outlier era, but that also dropped most of the
+    # negative-price events. Bringing them back with a 0.5× weight buys
+    # ~2× the holiday/extreme examples without spike domination.
+    train_dates = [issue_time_for(d) for d in _drange(date(2022, 1, 8),  date(2025, 12, 31))]
     val_dates   = [issue_time_for(d) for d in _drange(date(2026, 1, 1),  date(2026, 2, 28))]
 
     print(f"\nBuilding price windows: {len(train_dates)} train, {len(val_dates)} val")
@@ -75,6 +106,16 @@ def main() -> None:
     print(f"  target stats: mean={Y_tr.mean():.1f} std={Y_tr.std():.1f} "
           f"min={Y_tr.min():.1f} max={Y_tr.max():.1f}")
 
+    # ---- Per-window sample weights (M9) ----------------------------
+    federal_holidays = hols.country_holidays("DE", years=range(2022, 2027))
+    sample_w = np.array(
+        [_sample_weight(t, federal_holidays) for t in kept_tr], dtype=np.float32,
+    )
+    n_holiday_or_sun = int((sample_w > 1.5).sum())  # weight ≥ 3 (or 1.5 for old-year holidays)
+    n_old = int((sample_w < 1.0).sum())             # weight ≤ 0.5 means 2022-23 non-holiday
+    print(f"  sample weights: {n_holiday_or_sun} upweighted (holiday/Sun, "
+          f"3x), {n_old} downweighted (2022-23, 0.5x)")
+
     # ---- Feature-dropout augmentation (industry pattern) -----------
     # Append masked copies of a random subset of training windows so the
     # model sees both "VRE forecast present" and "VRE forecast missing"
@@ -85,11 +126,16 @@ def main() -> None:
     rng = np.random.RandomState(42)
     aug_idx = rng.choice(len(Xe_tr), size=n_aug, replace=False)
     Xd_aug = Xd_tr[aug_idx].copy()
+    # Zero everything derived from tso_vre_fc — the present flag is the
+    # only signal the model gets that VRE info is unavailable.
     Xd_aug[..., VRE_FC_COL_IDX] = 0.0
     Xd_aug[..., VRE_PRESENT_COL_IDX] = 0.0
+    Xd_aug[..., VRE_RATIO_COL_IDX] = 0.0
+    Xd_aug[..., VRE_PCTILE_COL_IDX] = 0.0
     Xe_tr = np.concatenate([Xe_tr, Xe_tr[aug_idx]], axis=0)
     Xd_tr = np.concatenate([Xd_tr, Xd_aug], axis=0)
     Y_tr  = np.concatenate([Y_tr,  Y_tr[aug_idx]],  axis=0)
+    sample_w = np.concatenate([sample_w, sample_w[aug_idx]], axis=0)
     print(f"  augmented with {n_aug} VRE-masked copies "
           f"({VRE_DROPOUT_FRAC:.0%}) -> train n={len(Xe_tr)}")
 
@@ -122,6 +168,7 @@ def main() -> None:
     ]
     history = model.fit(
         [Xe_tr_n, Xd_tr_n], Y_tr_n,
+        sample_weight=sample_w,
         validation_data=([Xe_va_n, Xd_va_n], Y_va_n),
         epochs=60, batch_size=32, callbacks=callbacks, verbose=2,
     )
@@ -155,6 +202,8 @@ def main() -> None:
     Xd_va_masked = Xd_va.copy()
     Xd_va_masked[..., VRE_FC_COL_IDX] = 0.0
     Xd_va_masked[..., VRE_PRESENT_COL_IDX] = 0.0
+    Xd_va_masked[..., VRE_RATIO_COL_IDX] = 0.0
+    Xd_va_masked[..., VRE_PCTILE_COL_IDX] = 0.0
     Xe_va_n2, Xd_va_masked_n, _ = scaler.transform(Xe_va, Xd_va_masked, Y_va)
     pred_va_masked = scaler.inverse_y(model.predict([Xe_va_n2, Xd_va_masked_n], verbose=0))
     val_p50_mae_masked = float(np.abs(Y_va - pred_va_masked[..., 1]).mean())
@@ -171,8 +220,10 @@ def main() -> None:
         y_mean=scaler.y_mean, y_std=scaler.y_std,
     )
     meta = {
-        "model": "price_quantile_v3",
+        "model": "price_quantile_v4",
         "vre_dropout_frac": VRE_DROPOUT_FRAC,
+        "weight_old_years": WEIGHT_OLD_YEARS,
+        "weight_holiday_or_sun": WEIGHT_HOLIDAY_OR_SUN,
         "val_p50_mae_eur_mwh_masked": val_p50_mae_masked,
         "val_p50_mae_delta_eur_mwh": val_p50_mae_masked - val_p50_mae,
         "target": "price__germany_luxembourg",

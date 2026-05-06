@@ -25,13 +25,15 @@ from loadforecast.models.dataset import FeatureScaler
 from loadforecast.models.price_dataset import PRICE, build_price_window
 
 PARQUET = "smard_merged_15min.parquet"
-MODEL_DIR = Path("model_checkpoints/price_quantile_v3")
+MODEL_DIR = Path("model_checkpoints/price_quantile_v4")
 OUT_CSV = Path("backtest_results/price_quantile_holdout.csv")
 OUT_CSV_MASKED = Path("backtest_results/price_quantile_holdout_vre_masked.csv")
 
-# Decoder feature indices for the v3 model (must match price_dataset.py).
+# Decoder feature indices (must match PRICE_DEC_FEATURE_NAMES order).
 VRE_FC_COL_IDX = 1
 VRE_PRESENT_COL_IDX = 2
+VRE_RATIO_COL_IDX = 3
+VRE_PCTILE_COL_IDX = 4
 
 
 def _drange(start: date, end: date, step: int = 1):
@@ -68,6 +70,8 @@ def _predict_quantile(model, scaler, df, issue, *, mask_vre: bool = False):
     if mask_vre:
         X_dec[..., VRE_FC_COL_IDX] = 0.0
         X_dec[..., VRE_PRESENT_COL_IDX] = 0.0
+        X_dec[..., VRE_RATIO_COL_IDX] = 0.0
+        X_dec[..., VRE_PCTILE_COL_IDX] = 0.0
     Xe, Xd = scaler.transform(w.X_enc[None, ...], X_dec[None, ...])
     raw = model.predict([Xe, Xd], verbose=0)
     y_norm = raw[0]

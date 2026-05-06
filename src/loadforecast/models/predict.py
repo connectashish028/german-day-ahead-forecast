@@ -22,7 +22,7 @@ DEFAULT_MODEL_DIR = Path("model_checkpoints/lstm_plain_v1")
 DEFAULT_ATTENTION_DIR = Path("model_checkpoints/lstm_attention_v1")
 DEFAULT_WEATHER_DIR = Path("model_checkpoints/lstm_weather_v1")
 DEFAULT_QUANTILE_DIR = Path("model_checkpoints/lstm_quantile_v1")
-DEFAULT_PRICE_QUANTILE_DIR = Path("model_checkpoints/price_quantile_v3")
+DEFAULT_PRICE_QUANTILE_DIR = Path("model_checkpoints/price_quantile_v4")
 
 
 @dataclass
