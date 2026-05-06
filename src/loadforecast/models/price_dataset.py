@@ -53,7 +53,9 @@ PRICE_ENC_FEATURE_NAMES = (
     "hour_sin", "hour_cos", "dow_sin", "dow_cos",
 )
 PRICE_DEC_FEATURE_NAMES = (
-    "tso_load_fc", "tso_vre_fc",  # NEW: TSO's day-ahead PV+wind forecast
+    "tso_load_fc",
+    "tso_vre_fc",            # SMARD day-ahead PV+wind forecast (the dominant price driver).
+    "tso_vre_fc_present",    # 1 if SMARD has published it for this delivery day, 0 otherwise.
     "hour_sin", "hour_cos", "dow_sin", "dow_cos",
     "is_federal_holiday",
 )
@@ -121,11 +123,18 @@ def build_price_window(
     X_enc = np.column_stack(enc_stack).astype(np.float32)
 
     # --- Decoder ----------------------------------------------------
+    # Industry pattern: real desks can't gate on SMARD's VRE day-ahead
+    # publication (lands D-1 ~12:30, sometimes later). We feed the forecast
+    # *plus* a binary presence flag, and impute NaN→0 when SMARD hasn't
+    # published. With matching feature-dropout augmentation in training,
+    # the model learns to fall back to weather + calendar gracefully.
     cal_dec = calendar_features(target_idx)
     tso_d = masked[TSO_LOAD_FC].reindex(target_idx).to_numpy()
     vre_fc_d = masked[TSO_VRE_FC].reindex(target_idx).to_numpy()
+    vre_present_d = (~np.isnan(vre_fc_d)).astype(np.float32)
+    vre_fc_d = np.nan_to_num(vre_fc_d, nan=0.0)
     dec_stack = [
-        tso_d, vre_fc_d,
+        tso_d, vre_fc_d, vre_present_d,
         cal_dec["hour_sin"].to_numpy(),
         cal_dec["hour_cos"].to_numpy(),
         cal_dec["dow_sin"].to_numpy(),

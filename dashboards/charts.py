@@ -333,6 +333,61 @@ def volatility_quartile_chart(
     return fig
 
 
+def price_forecast_chart(
+    forecast: pd.DataFrame,
+    actuals: pd.Series | None = None,
+    title: str | None = None,
+) -> go.Figure:
+    """Day-ahead price forecast with P10/P90 ribbon. €/MWh on the y-axis.
+
+    Differs from `forecast_chart` in two ways: there's no TSO baseline (the
+    day-ahead price is itself the auction outcome, no operator forecast to
+    benchmark against), and we draw a zero line because negative prices
+    are a routine feature of the German market on high-PV days.
+    """
+    fig = go.Figure()
+    fig.add_hline(y=0, line=dict(color=TEXT_30, width=1, dash="dot"))
+
+    x_fc = forecast.index.tz_convert("Europe/Berlin")
+
+    fig.add_trace(go.Scatter(
+        x=x_fc, y=forecast["p90"], mode="lines",
+        line=dict(color=PREDICTION, width=0.5, dash="dot"),
+        name="p90_band", legendgroup="band",
+        hoverinfo="skip", showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(
+        x=x_fc, y=forecast["p10"], mode="lines",
+        line=dict(color=PREDICTION, width=0.5, dash="dot"),
+        fill="tonexty", fillcolor=PREDICTION_FILL,
+        name="p10_band", legendgroup="band",
+        hoverinfo="skip", showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(
+        x=x_fc, y=forecast["p50"], mode="lines",
+        line=dict(color=PREDICTION, width=2.2),
+        name="Model forecast (P50)",
+        hovertemplate="%{y:,.1f} €/MWh<extra>P50</extra>",
+    ))
+
+    if actuals is not None and actuals.notna().any():
+        fig.add_trace(go.Scatter(
+            x=actuals.index.tz_convert("Europe/Berlin"),
+            y=actuals.values, mode="lines",
+            line=dict(color=ACTUAL, width=2.2),
+            name="Actual price",
+            hovertemplate="%{y:,.1f} €/MWh<extra>Actual</extra>",
+        ))
+
+    layout = _base_layout(title=title, height=360)
+    layout["yaxis"] = {**_AXIS, "title": "Day-ahead price (€/MWh)"}
+    layout["xaxis"] = {**_AXIS, "title": "Time (Berlin)"}
+    layout["hovermode"] = "x unified"
+    fig.update_layout(**layout)
+    return fig
+
+
 __all__ = ["forecast_chart", "skill_chart", "error_chart",
            "ablation_chart", "hour_profile_chart",
+           "price_forecast_chart",
            "volatility_quartile_chart"]

@@ -5,7 +5,11 @@ Mirrors train_lstm_quantile.py (the load model) but with:
   - encoder feature mix from price_dataset.py
   - training window starting 2024-01-01 (avoid the 2022 €500 outlier era)
 
-Saves to model_checkpoints/price_quantile_v1/.
+v3 (current): adds feature-dropout augmentation on `tso_vre_fc` so the
+model learns to fall back to weather + load + calendar when SMARD's VRE
+day-ahead forecast hasn't published yet (production pattern).
+
+Saves to model_checkpoints/price_quantile_v3/.
 """
 from __future__ import annotations
 
@@ -30,7 +34,16 @@ from loadforecast.models.price_dataset import (
 )
 
 PARQUET = "smard_merged_15min.parquet"
-OUT_DIR = Path("model_checkpoints/price_quantile_v1")
+OUT_DIR = Path("model_checkpoints/price_quantile_v3")
+
+# Feature-dropout augmentation: fraction of training windows where we mask
+# tso_vre_fc (set to 0 + present-flag to 0). Teaches the model to handle
+# the case where SMARD's VRE day-ahead forecast hasn't published yet —
+# the production-grade pattern. Tuned conservatively at 30 %; higher
+# (~50 %) trades full-feature accuracy for robustness.
+VRE_DROPOUT_FRAC = 0.30
+VRE_FC_COL_IDX = 1   # index of tso_vre_fc in the decoder feature stack
+VRE_PRESENT_COL_IDX = 2  # index of tso_vre_fc_present
 
 
 def _drange(start: date, end: date, step: int = 1):
@@ -61,6 +74,24 @@ def main() -> None:
     print(f"  decoder features: {PRICE_DEC_FEATURE_NAMES} + 4 weather")
     print(f"  target stats: mean={Y_tr.mean():.1f} std={Y_tr.std():.1f} "
           f"min={Y_tr.min():.1f} max={Y_tr.max():.1f}")
+
+    # ---- Feature-dropout augmentation (industry pattern) -----------
+    # Append masked copies of a random subset of training windows so the
+    # model sees both "VRE forecast present" and "VRE forecast missing"
+    # regimes. Augmentation is applied BEFORE scaling so the scaler
+    # learns the bimodal distribution of the present-flag and adjusted
+    # mean/std for the imputed-zero VRE column.
+    n_aug = int(VRE_DROPOUT_FRAC * len(Xe_tr))
+    rng = np.random.RandomState(42)
+    aug_idx = rng.choice(len(Xe_tr), size=n_aug, replace=False)
+    Xd_aug = Xd_tr[aug_idx].copy()
+    Xd_aug[..., VRE_FC_COL_IDX] = 0.0
+    Xd_aug[..., VRE_PRESENT_COL_IDX] = 0.0
+    Xe_tr = np.concatenate([Xe_tr, Xe_tr[aug_idx]], axis=0)
+    Xd_tr = np.concatenate([Xd_tr, Xd_aug], axis=0)
+    Y_tr  = np.concatenate([Y_tr,  Y_tr[aug_idx]],  axis=0)
+    print(f"  augmented with {n_aug} VRE-masked copies "
+          f"({VRE_DROPOUT_FRAC:.0%}) -> train n={len(Xe_tr)}")
 
     scaler = FeatureScaler.fit(Xe_tr, Xd_tr, Y_tr)
     Xe_tr_n, Xd_tr_n, Y_tr_n = scaler.transform(Xe_tr, Xd_tr, Y_tr)
@@ -110,12 +141,26 @@ def main() -> None:
     avg_width = float((p90 - p10).mean())
     crossings = float(((p90 < p50) | (p50 < p10)).mean())
 
-    print(f"\nValidation P50 MAE:                {val_p50_mae:>7.2f} €/MWh")
+    print(f"\nValidation P50 MAE (full features): {val_p50_mae:>7.2f} €/MWh")
     print(f"Validation P50 / mean |y|:         {val_p50_mae / val_mean_abs_y * 100:>7.2f} %")
     print(f"\nInterval [P10, P90]:")
     print(f"  Empirical coverage:    {inside:.3%}   (target ~80%)")
     print(f"  Mean width:            {avg_width:.1f} €/MWh")
     print(f"  Quantile crossings:    {crossings:.3%}")
+
+    # ---- Degraded-mode validation (no fc_gen) ----------------------
+    # Mask the VRE forecast on the entire val set and re-score. This is
+    # the "rendered before SMARD published" scenario — we want to know
+    # the cost of running without the dominant feature.
+    Xd_va_masked = Xd_va.copy()
+    Xd_va_masked[..., VRE_FC_COL_IDX] = 0.0
+    Xd_va_masked[..., VRE_PRESENT_COL_IDX] = 0.0
+    Xe_va_n2, Xd_va_masked_n, _ = scaler.transform(Xe_va, Xd_va_masked, Y_va)
+    pred_va_masked = scaler.inverse_y(model.predict([Xe_va_n2, Xd_va_masked_n], verbose=0))
+    val_p50_mae_masked = float(np.abs(Y_va - pred_va_masked[..., 1]).mean())
+    print(f"\nValidation P50 MAE (VRE masked):    {val_p50_mae_masked:>7.2f} EUR/MWh")
+    print(f"  delta vs full features:           +{val_p50_mae_masked - val_p50_mae:>6.2f} EUR/MWh "
+          f"({(val_p50_mae_masked / val_p50_mae - 1) * 100:+.1f} %)")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     model.save(OUT_DIR / "model.keras")
@@ -126,7 +171,10 @@ def main() -> None:
         y_mean=scaler.y_mean, y_std=scaler.y_std,
     )
     meta = {
-        "model": "price_quantile",
+        "model": "price_quantile_v3",
+        "vre_dropout_frac": VRE_DROPOUT_FRAC,
+        "val_p50_mae_eur_mwh_masked": val_p50_mae_masked,
+        "val_p50_mae_delta_eur_mwh": val_p50_mae_masked - val_p50_mae,
         "target": "price__germany_luxembourg",
         "include_weather": True,
         "quantiles": list(QUANTILES),

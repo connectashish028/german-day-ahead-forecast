@@ -22,6 +22,7 @@ DEFAULT_MODEL_DIR = Path("model_checkpoints/lstm_plain_v1")
 DEFAULT_ATTENTION_DIR = Path("model_checkpoints/lstm_attention_v1")
 DEFAULT_WEATHER_DIR = Path("model_checkpoints/lstm_weather_v1")
 DEFAULT_QUANTILE_DIR = Path("model_checkpoints/lstm_quantile_v1")
+DEFAULT_PRICE_QUANTILE_DIR = Path("model_checkpoints/price_quantile_v3")
 
 
 @dataclass
@@ -177,6 +178,48 @@ def lstm_quantile_predict(
     return out["p50"].rename("y_lstm_quantile")
 
 
+def price_quantile_predict_full(
+    df: pd.DataFrame,
+    issue_time: pd.Timestamp,
+    *,
+    model_dir: Path | str = DEFAULT_PRICE_QUANTILE_DIR,
+) -> pd.DataFrame:
+    """Probabilistic day-ahead price forecast: returns (96, 3) DataFrame
+    with columns p10, p50, p90 in €/MWh.
+
+    Unlike the load model, the price model targets the raw price directly
+    (no TSO baseline to subtract — the day-ahead price is what we forecast).
+    Returns an all-NaN frame indexed on the delivery day if the encoder/
+    decoder window cannot be built (e.g. issue_time outside the parquet).
+    """
+    from .price_dataset import build_price_window
+
+    model_dir = Path(model_dir)
+    bundle = _get(model_dir)
+    include_weather = bool(bundle.meta.get("include_weather", True))
+    w = build_price_window(df, issue_time, include_weather=include_weather)
+
+    enc = _fill_small_gaps(w.X_enc)
+    dec = _fill_small_gaps(w.X_dec)
+    if enc is None or dec is None:
+        nan = np.full(96, np.nan)
+        out = pd.DataFrame(
+            {"p10": nan, "p50": nan, "p90": nan}, index=w.target_idx,
+        )
+        out.index.name = "target_ts"
+        return out
+
+    Xe, Xd = bundle.scaler.transform(enc[None, ...], dec[None, ...])
+    raw = bundle.keras_model.predict([Xe, Xd], verbose=0)  # (1, 96, 3)
+    y = bundle.scaler.inverse_y(raw[0])                    # (96, 3)
+    out = pd.DataFrame(
+        {"p10": y[:, 0], "p50": y[:, 1], "p90": y[:, 2]},
+        index=w.target_idx,
+    )
+    out.index.name = "target_ts"
+    return out
+
+
 def lstm_attention_predict(
     df: pd.DataFrame,
     issue_time: pd.Timestamp,
@@ -241,6 +284,7 @@ def lstm_attention_explain(
 __all__ = [
     "DEFAULT_ATTENTION_DIR",
     "DEFAULT_MODEL_DIR",
+    "DEFAULT_PRICE_QUANTILE_DIR",
     "DEFAULT_QUANTILE_DIR",
     "DEFAULT_WEATHER_DIR",
     "LoadedModel",
@@ -250,4 +294,5 @@ __all__ = [
     "lstm_quantile_predict_full",
     "lstm_residual_predict",
     "lstm_weather_predict",
+    "price_quantile_predict_full",
 ]
