@@ -37,7 +37,6 @@ from .schema import (
     SRC_ENTSOE,
     SRC_OPEN_METEO,
     SRC_SMARD_API,
-    SRC_SMARD_CSV,
     SRC_SMARD_DOWNLOADCENTER,
     Column,
 )
@@ -46,7 +45,7 @@ DEFAULT_PARQUET = Path("smard_merged_15min.parquet")
 DEFAULT_START = pd.Timestamp("2022-01-01", tz="UTC")
 SOURCES = (
     SRC_ENERGY_CHARTS, SRC_SMARD_API, SRC_SMARD_DOWNLOADCENTER,
-    SRC_SMARD_CSV, SRC_OPEN_METEO, SRC_ENTSOE,
+    SRC_OPEN_METEO, SRC_ENTSOE,
 )
 
 # Columns we *must* have (M4 dataset breaks without them).
@@ -65,9 +64,6 @@ def _load_source(source_name: str):
     if source_name == SRC_SMARD_API:
         from .sources import smard_api
         return smard_api
-    if source_name == SRC_SMARD_CSV:
-        from .sources import smard_csv
-        return smard_csv
     if source_name == SRC_SMARD_DOWNLOADCENTER:
         from .sources import smard_downloadcenter
         return smard_downloadcenter

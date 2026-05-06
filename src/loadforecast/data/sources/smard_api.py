@@ -6,8 +6,8 @@ wraps those into the unified `fetch(column, start, end)` interface used
 by `refresh.py`.
 
 Use this only for the columns Energy-Charts can't give us *and* whose
-SMARD filter ID we already know. For anything else, the user-facing
-fall-back is `sources/smard_csv.py`.
+SMARD filter ID we already know. For TSO consumption forecasts, see
+`sources/smard_downloadcenter.py` (different SMARD endpoint).
 """
 
 from __future__ import annotations

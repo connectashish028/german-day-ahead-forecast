@@ -1,8 +1,7 @@
 """SMARD downloadcenter JSON-API source for TSO forecast columns.
 
-Replaces the manual-CSV path in `sources/smard_csv.py` for the columns
-the model actually uses. Hits the same endpoint the smard.de download
-form uses behind the scenes, so no auth and no email registration.
+Hits the same endpoint the smard.de download form uses behind the
+scenes — no auth, no email registration, no manual CSV step.
 
 Module IDs were captured from a real browser request (DevTools network
 panel) — see `scripts/probe_smard_downloadcenter.py` for the discovery
@@ -11,9 +10,9 @@ trail. Only the IDs the model actually needs are wired up here:
   6000411  Forecasted consumption: total grid load   (fc_cons__grid_load)
   6004362  Forecasted consumption: residual load     (fc_cons__residual_load)
 
-The forecasted-generation IDs (`fc_gen__*`) aren't covered yet — the
-model doesn't use them, but the manual-CSV fallback still works for
-completeness if a future feature wants them.
+To add another TSO column (e.g. forecasted generation), capture its
+module ID from a real browser DevTools request and append it to
+`MODULE_IDS` below.
 """
 from __future__ import annotations
 

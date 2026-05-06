@@ -14,15 +14,15 @@ Adding a new column: append a `Column(...)` to `COLUMNS` below.
 
 Source priority (most automated → least):
 
-  1. SRC_ENERGY_CHARTS — REST, no auth. Day-ahead prices (15 zones),
-                         actual generation by source.
-  2. SRC_SMARD_API     — REST, no auth. Things with known filter IDs
-                         (total grid load = 410).
-  3. SRC_SMARD_CSV     — manual download fallback. Used for the TSO
-                         load + generation forecasts whose SMARD filter
-                         IDs we couldn't discover.
-  4. SRC_ENTSOE        — token-gated; not currently used. Adding the
-                         token simply re-routes columns 3+4 here.
+  1. SRC_ENERGY_CHARTS       — REST, no auth. Day-ahead prices (15 zones),
+                                actual generation by source.
+  2. SRC_SMARD_API           — REST, no auth. Filter IDs we know
+                                (total grid load = 410).
+  3. SRC_SMARD_DOWNLOADCENTER — REST, no auth. The downloadcenter JSON
+                                endpoint, used for TSO consumption
+                                forecasts (fc_cons__*).
+  4. SRC_OPEN_METEO          — REST, no auth. NWP weather forecasts.
+  5. SRC_ENTSOE              — token-gated; not currently used.
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ from dataclasses import dataclass, field
 # Source identifiers
 SRC_ENERGY_CHARTS = "energy_charts"
 SRC_SMARD_API = "smard_api"
-SRC_SMARD_CSV = "smard_csv"
 SRC_SMARD_DOWNLOADCENTER = "smard_downloadcenter"
 SRC_ENTSOE = "entsoe"
 SRC_OPEN_METEO = "open_meteo"
@@ -113,21 +112,16 @@ def _build_columns() -> list[Column]:
         fetch_kwargs={"filter_id": 4359, "region": "DE-LU"},
     ))
 
-    # 4. TSO load + generation forecasts.
-    # Consumption forecasts via SMARD downloadcenter JSON API (auto-fetch);
-    # generation forecasts still via manual CSV (model doesn't use them).
+    # 4. TSO consumption forecasts via SMARD downloadcenter JSON API.
+    # We previously also pulled fc_gen__* (renewable-generation forecasts)
+    # via manual CSV downloads, but the model doesn't use them and they
+    # broke daily CI. Removed; re-add via the downloadcenter source if a
+    # future feature needs them.
     for suffix in ("grid_load", "residual_load"):
         cols.append(Column(
             name=f"fc_cons__{suffix}",
             source=SRC_SMARD_DOWNLOADCENTER,
             description=f"Day-ahead {suffix} forecast (TSO baseline), MW",
-        ))
-    for suffix in ("total", "photovoltaics_and_wind", "wind_offshore",
-                   "wind_onshore", "photovoltaics", "other"):
-        cols.append(Column(
-            name=f"fc_gen__{suffix}",
-            source=SRC_SMARD_CSV,
-            description=f"Day-ahead {suffix.replace('_', ' ')} generation forecast, MW",
         ))
 
     # 5. Weather (Open-Meteo NWP, population-weighted across 6 load centres).
@@ -165,7 +159,6 @@ __all__ = [
     "SRC_ENTSOE",
     "SRC_OPEN_METEO",
     "SRC_SMARD_API",
-    "SRC_SMARD_CSV",
     "SRC_SMARD_DOWNLOADCENTER",
     "columns_by_source",
 ]
