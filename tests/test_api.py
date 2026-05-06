@@ -48,7 +48,7 @@ def test_forecast_known_good_date(client):
     body = r.json()
 
     assert body["delivery_date"] == "2025-06-15"
-    assert body["model"] == "lstm_quantile_v1"
+    assert body["model"] == "Probabilistic LoadCast v1"
     assert body["n_steps"] == 96
     assert len(body["horizons"]) == 96
 

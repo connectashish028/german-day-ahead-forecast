@@ -134,6 +134,10 @@ def refresh(
                 now = pd.Timestamp(datetime.now(UTC)).floor("15min")
                 start = (min(existing_end, now) - pd.Timedelta(hours=24)).floor("15min")
 
+    existing_rows_before = (
+        len(pd.read_parquet(parquet_path, columns=[]).index)
+        if parquet_path.exists() else 0
+    )
     print(f"Refresh window: {start}  ->  {through}")
     print(f"{len(COLUMNS)} columns across {len(SOURCES)} sources.\n")
 
@@ -159,7 +163,8 @@ def refresh(
         n = len(existing_rows) if existing_rows is not None else 0
         print(f"\nNo fresh rows in [{start}, {through}). Parquet unchanged ({n} rows).")
         return {
-            "rows": n, "columns": existing_rows.shape[1] if existing_rows is not None else 0,
+            "rows": n, "new_rows": 0,
+            "columns": existing_rows.shape[1] if existing_rows is not None else 0,
             "errors": errors, "missing_required": [], "parquet_path": parquet_path,
         }
     fresh_df.index = fresh_df.index.tz_convert("UTC")
@@ -185,8 +190,9 @@ def refresh(
     tmp.replace(parquet_path)
 
     missing_required = [c for c in REQUIRED if c in errors or c not in merged.columns]
+    new_rows = len(merged) - existing_rows_before
     print()
-    print(f"Wrote {parquet_path}  rows={len(merged)}  cols={merged.shape[1]}")
+    print(f"Wrote {parquet_path}  rows={len(merged)}  (+{new_rows})  cols={merged.shape[1]}")
     print(f"Range: {merged.index.min()}  ->  {merged.index.max()}")
     if errors:
         print(f"Failed columns ({len(errors)}): {errors}")
@@ -195,6 +201,7 @@ def refresh(
 
     return {
         "rows": len(merged),
+        "new_rows": new_rows,
         "columns": merged.shape[1],
         "errors": errors,
         "missing_required": missing_required,
@@ -211,6 +218,9 @@ def main() -> int:
                    help="End of fetch window (UTC). Defaults to now.")
     p.add_argument("--rebuild", action="store_true",
                    help="Rebuild from scratch (start defaults to 2022-01-01).")
+    p.add_argument("--fail-if-no-new-rows", action="store_true",
+                   help="Exit with code 2 if the refresh produced zero new rows. "
+                        "Useful for CI: lets the daily action skip an empty commit.")
     args = p.parse_args()
 
     # Make tz-aware UTC if user passed naive timestamps.
@@ -222,7 +232,12 @@ def main() -> int:
         pass
 
     result = refresh(args.parquet, start=start, through=through, rebuild=args.rebuild)
-    return 0 if not result["missing_required"] else 1
+    if result["missing_required"]:
+        return 1
+    if args.fail_if_no_new_rows and result.get("new_rows", 0) <= 0:
+        print("\n--fail-if-no-new-rows: 0 new rows; exiting 2.", file=sys.stderr)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

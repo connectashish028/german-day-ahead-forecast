@@ -22,7 +22,6 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field

@@ -42,9 +42,9 @@ for path in (ROOT, ROOT / "src"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from dashboards import charts, styles  # noqa: E402
 from loadforecast.backtest import issue_time_for, load_smard_15min  # noqa: E402
 from loadforecast.models.predict import lstm_quantile_predict_full  # noqa: E402
-from dashboards import charts, styles  # noqa: E402
 
 PARQUET = ROOT / "smard_merged_15min.parquet"
 ACTUAL_COL = "actual_cons__grid_load"
@@ -98,7 +98,7 @@ data_max = df.index.max().tz_convert("Europe/Berlin").date()
 # --- Hero bar -----------------------------------------------------------
 
 st.markdown(
-    f"""
+    """
     <div class="hero-bar">
         <div class="hero-brand">German Day-Ahead Load Forecast</div>
         <div class="hero-badge">20 % lower error than TSO</div>
