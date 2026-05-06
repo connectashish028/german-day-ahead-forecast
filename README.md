@@ -121,6 +121,7 @@ All data is licensed CC-BY 4.0.
 
 ## What's next
 
+- **Day-ahead price forecasting** *(in progress)* — extending the same architecture to predict the German day-ahead spot price, the actual signal traders care about. The data layer already pulls 15 bidding zones, the leakage-safe windowing already exists; the model just needs a new target and a price-aware feature set. Goal: forecast tomorrow's hourly clearing price with calibrated uncertainty bands, then quantify what that forecast is worth in € via a simple battery-dispatch P&L.
 - **Cross-border price features** — 14 neighbour bidding zones already in the parquet; threading them into the windowing pipeline is the next obvious feature ablation.
 - **Conformal calibration** — split-conformal wrapper to upgrade the empirical 78 % uncertainty-band coverage to a finite-sample-guaranteed 80 %.
 - **Weekly retrain** — refit on the latest data, promote the new model only if it beats the current production model on a 4-week holdout window.
