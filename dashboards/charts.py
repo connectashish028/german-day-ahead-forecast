@@ -387,7 +387,174 @@ def price_forecast_chart(
     return fig
 
 
+def price_hour_profile_chart(
+    backtest: pd.DataFrame,
+    title: str | None = None,
+) -> go.Figure:
+    """Average absolute price error by hour-of-day, model vs naive yesterday.
+
+    `backtest` must have columns y_true, p50, naive_1d, target_ts (UTC).
+    Aggregates to local Berlin hour.
+    """
+    df = backtest.copy()
+    df["target_ts"] = pd.to_datetime(df["target_ts"], utc=True)
+    df["hour"] = df["target_ts"].dt.tz_convert("Europe/Berlin").dt.hour
+    df["err_model"] = (df["y_true"] - df["p50"]).abs()
+    df["err_naive"] = (df["y_true"] - df["naive_1d"]).abs()
+    profile = df.groupby("hour")[["err_model", "err_naive"]].mean()
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=profile.index, y=profile["err_naive"], mode="lines",
+        line=dict(color=TSO, width=1.6, dash="dash"),
+        name="Naive yesterday",
+        hovertemplate="hour %{x}: naive err %{y:,.1f} €/MWh<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=profile.index, y=profile["err_model"], mode="lines",
+        line=dict(color=PREDICTION, width=2.2),
+        fill="tonexty", fillcolor=PREDICTION_FILL,
+        name="Model (P50)",
+        hovertemplate="hour %{x}: model err %{y:,.1f} €/MWh<extra></extra>",
+    ))
+    layout = _base_layout(title=title, height=320)
+    layout["xaxis"] = {**_AXIS, "title": "Hour of day (Berlin local)",
+                       "dtick": 3, "tickmode": "linear"}
+    layout["yaxis"] = {**_AXIS, "title": "Mean absolute error (€/MWh)"}
+    layout["hovermode"] = "x unified"
+    fig.update_layout(**layout)
+    return fig
+
+
+def price_skill_chart(rolling: pd.DataFrame, title: str | None = None) -> go.Figure:
+    """30-day rolling MAE skill score for the price model vs naive yesterday.
+
+    `rolling` must have columns model_mae_30d, naive_mae_30d, skill indexed by date.
+    Identical visual to the load skill chart, just different baseline.
+    """
+    fig = go.Figure()
+    fig.add_hline(y=0, line=dict(color=TEXT_30, width=1, dash="dot"))
+    fig.add_trace(go.Scatter(
+        x=rolling.index, y=rolling["skill"] * 100, mode="lines",
+        line=dict(color=PREDICTION, width=2.2),
+        fill="tozeroy", fillcolor=PREDICTION_FILL,
+        name="30-day rolling improvement",
+        hovertemplate="%{x|%Y-%m-%d}<br>error reduction: %{y:+.1f}%%<extra></extra>",
+    ))
+    layout = _base_layout(title=title, height=360)
+    layout["yaxis"] = {**_AXIS, "tickformat": "+.0f", "ticksuffix": " %",
+                       "title": "Error reduction vs naive (30-day rolling)"}
+    layout["xaxis"] = {**_AXIS, "title": "Delivery date"}
+    fig.update_layout(**layout)
+    return fig
+
+
+def price_spread_quartile_chart(
+    quartiles: pd.DataFrame,
+    title: str | None = None,
+) -> go.Figure:
+    """Paired bars: actual vs model-predicted daily spread by spread quartile.
+
+    `quartiles` must have columns:
+      - `label`         ('Calm', 'Moderate', 'High', 'Extreme')
+      - `range`         human-readable spread range
+      - `actual_spread` mean actual daily spread in €/MWh
+      - `model_spread`  mean model P50 spread in €/MWh
+      - `n_days`        sample size in that bin
+    """
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=quartiles["label"], y=quartiles["actual_spread"],
+        name="Actual spread",
+        marker=dict(color="rgba(0,0,0,0)",
+                    line=dict(color=ACTUAL, width=1.5)),
+        text=[f"{v:.0f}" for v in quartiles["actual_spread"]],
+        textposition="outside",
+        textfont=dict(family="JetBrains Mono, monospace",
+                      color=TEXT_70, size=11),
+        hovertemplate="<b>%{x}</b><br>actual %{y:,.0f} €/MWh<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        x=quartiles["label"], y=quartiles["model_spread"],
+        name="Model P50 spread",
+        marker=dict(color=PREDICTION,
+                    line=dict(color=PREDICTION, width=0)),
+        text=[f"{v:.0f}" for v in quartiles["model_spread"]],
+        textposition="outside",
+        textfont=dict(family="JetBrains Mono, monospace",
+                      color=TEXT, size=11),
+        hovertemplate="<b>%{x}</b><br>model %{y:,.0f} €/MWh<extra></extra>",
+    ))
+
+    range_text = [f"{r}<br>n={n}"
+                  for r, n in zip(quartiles["range"], quartiles["n_days"],
+                                  strict=True)]
+    layout = _base_layout(title=title, height=380)
+    layout["barmode"] = "group"
+    layout["bargap"] = 0.45
+    layout["bargroupgap"] = 0.08
+    layout["xaxis"] = {
+        **_AXIS, "title": "",
+        "tickmode": "array",
+        "tickvals": list(quartiles["label"]),
+        "ticktext": [f"{lbl}<br><span style='color:rgba(255,255,255,0.4); "
+                     f"font-size:10px;'>{txt}</span>"
+                     for lbl, txt in zip(quartiles["label"], range_text,
+                                         strict=True)],
+    }
+    layout["yaxis"] = {**_AXIS, "title": "Daily spread (€/MWh)"}
+    layout["margin"] = dict(l=50, r=20, t=40 if title else 30, b=80)
+    fig.update_layout(**layout)
+    return fig
+
+
+def price_pnl_chart(pnl: pd.DataFrame, title: str | None = None) -> go.Figure:
+    """Cumulative battery P&L over the holdout — perfect-foresight / naive / model P50 / band.
+
+    `pnl` must have columns issue_date, oracle_pnl, naive_pnl, model_p50_pnl,
+    model_band_pnl. The dispatch simulation lives in `loadforecast.dispatch`.
+    """
+    pnl = pnl.sort_values("issue_date").reset_index(drop=True)
+    x = pd.to_datetime(pnl["issue_date"])
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x, y=pnl["oracle_pnl"].cumsum(), mode="lines",
+        name="Perfect-foresight",
+        line=dict(color=TEXT_70, width=1.4),
+        hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.0f} €<extra>Perfect-foresight</extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=pnl["model_p50_pnl"].cumsum(), mode="lines",
+        name="Model P50",
+        line=dict(color=PREDICTION, width=2.4),
+        hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.0f} €<extra>Model P50</extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=pnl["model_band_pnl"].cumsum(), mode="lines",
+        name="Model P10/P90",
+        line=dict(color=PREDICTION, width=1.4, dash="dot"),
+        hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.0f} €<extra>Model P10/P90</extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=pnl["naive_pnl"].cumsum(), mode="lines",
+        name="Naive yesterday",
+        line=dict(color=TSO, width=1.4, dash="dash"),
+        hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.0f} €<extra>Naive</extra>",
+    ))
+    layout = _base_layout(title=title, height=400)
+    layout["yaxis"] = {**_AXIS, "title": "Cumulative P&L (€)"}
+    layout["xaxis"] = {**_AXIS, "title": "Delivery date"}
+    layout["hovermode"] = "x unified"
+    fig.update_layout(**layout)
+    return fig
+
+
 __all__ = ["forecast_chart", "skill_chart", "error_chart",
            "ablation_chart", "hour_profile_chart",
            "price_forecast_chart",
+           "price_hour_profile_chart",
+           "price_pnl_chart",
+           "price_skill_chart",
+           "price_spread_quartile_chart",
            "volatility_quartile_chart"]

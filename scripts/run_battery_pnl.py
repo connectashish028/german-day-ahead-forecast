@@ -69,13 +69,13 @@ def main() -> None:
     # ---- Summary table ----
     summary_eur = df[["oracle_pnl", "naive_pnl", "model_p50_pnl", "model_band_pnl"]].sum()
     print(f"Total P&L over {len(df)} days (€):")
-    print(f"  Oracle             : {summary_eur['oracle_pnl']:>10,.0f}")
+    print(f"  Perfect-foresight  : {summary_eur['oracle_pnl']:>10,.0f}")
     print(f"  Naive yesterday    : {summary_eur['naive_pnl']:>10,.0f}  "
-          f"({summary_eur['naive_pnl']/summary_eur['oracle_pnl']*100:.1f} % of oracle)")
+          f"({summary_eur['naive_pnl']/summary_eur['oracle_pnl']*100:.1f} % of perfect-foresight)")
     print(f"  Model P50 only     : {summary_eur['model_p50_pnl']:>10,.0f}  "
-          f"({summary_eur['model_p50_pnl']/summary_eur['oracle_pnl']*100:.1f} % of oracle)")
+          f"({summary_eur['model_p50_pnl']/summary_eur['oracle_pnl']*100:.1f} % of perfect-foresight)")
     print(f"  Model P10 / P90    : {summary_eur['model_band_pnl']:>10,.0f}  "
-          f"({summary_eur['model_band_pnl']/summary_eur['oracle_pnl']*100:.1f} % of oracle)")
+          f"({summary_eur['model_band_pnl']/summary_eur['oracle_pnl']*100:.1f} % of perfect-foresight)")
     print()
 
     # ---- Per-day per-MWh-of-capacity ----
@@ -83,7 +83,7 @@ def main() -> None:
     n_days = len(df)
     eur_per_mwh_per_day = summary_eur / (cap * n_days)
     print(f"€ per day per MWh of battery capacity:")
-    print(f"  Oracle             : {eur_per_mwh_per_day['oracle_pnl']:>7.2f}")
+    print(f"  Perfect-foresight  : {eur_per_mwh_per_day['oracle_pnl']:>7.2f}")
     print(f"  Naive yesterday    : {eur_per_mwh_per_day['naive_pnl']:>7.2f}")
     print(f"  Model P50          : {eur_per_mwh_per_day['model_p50_pnl']:>7.2f}")
     print(f"  Model P10/P90      : {eur_per_mwh_per_day['model_band_pnl']:>7.2f}")

@@ -137,10 +137,11 @@ input, select, textarea, .stDateInput input, .stSelectbox div[data-baseweb="sele
 
 .stat-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
     background: {BORDER}; border: 1px solid {BORDER}; margin: 1.5rem 0 3rem 0; }}
-.stat-cell {{ background: {BG}; padding: 1.5rem; }}
+.stat-cell {{ background: {BG}; padding: 1.5rem;
+    display: flex; flex-direction: column; justify-content: flex-end; }}
 .stat-label {{ font-family: 'JetBrains Mono', monospace; font-size: 0.7rem;
     letter-spacing: 0.12em; text-transform: uppercase; color: {TEXT_50};
-    margin-bottom: 0.5rem; }}
+    margin-bottom: 0.5rem; flex: 1 1 auto; }}
 .stat-value {{ font-family: 'JetBrains Mono', monospace; font-size: 1.75rem;
     font-weight: 300; color: {TEXT}; line-height: 1; }}
 .stat-unit {{ font-family: 'JetBrains Mono', monospace; font-size: 0.875rem;
@@ -158,6 +159,44 @@ a:hover {{ text-decoration-color: {TEXT}; color: {TEXT_50} !important; }}
 
 /* Plotly chart toolbar — tone down */
 .modebar {{ filter: invert(1) hue-rotate(180deg) opacity(0.4); }}
+
+/* Info tooltip on KPI tiles — pure CSS hover, dark themed */
+.info-tip {{
+    display: inline-block;
+    position: relative;
+    margin-left: 0.35rem;
+    color: rgba(255,255,255,0.40);
+    cursor: help;
+    font-size: 0.72rem;
+    line-height: 1;
+    transition: color 0.15s ease;
+}}
+.info-tip:hover {{ color: rgba(255,255,255,0.90); }}
+.info-tip-content {{
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    top: 1.4rem;
+    left: -0.5rem;
+    z-index: 100;
+    width: 240px;
+    padding: 0.6rem 0.75rem;
+    background: #2a2d35;
+    border: 1px solid {BORDER_STRONG};
+    color: {TEXT};
+    font-family: 'Inter', sans-serif;
+    font-size: 0.75rem;
+    font-weight: 400;
+    letter-spacing: normal;
+    text-transform: none;
+    line-height: 1.5;
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+}}
+.info-tip:hover .info-tip-content {{
+    visibility: visible;
+    opacity: 1;
+}}
 </style>
 """
 
