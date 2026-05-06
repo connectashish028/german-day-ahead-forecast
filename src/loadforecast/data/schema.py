@@ -113,16 +113,20 @@ def _build_columns() -> list[Column]:
     ))
 
     # 4. TSO consumption forecasts via SMARD downloadcenter JSON API.
-    # We previously also pulled fc_gen__* (renewable-generation forecasts)
-    # via manual CSV downloads, but the model doesn't use them and they
-    # broke daily CI. Removed; re-add via the downloadcenter source if a
-    # future feature needs them.
     for suffix in ("grid_load", "residual_load"):
         cols.append(Column(
             name=f"fc_cons__{suffix}",
             source=SRC_SMARD_DOWNLOADCENTER,
             description=f"Day-ahead {suffix} forecast (TSO baseline), MW",
         ))
+    # Day-ahead renewable forecast — the dominant price driver. Re-added
+    # for the price model after we discovered the load model didn't need
+    # it but the price model very much does.
+    cols.append(Column(
+        name="fc_gen__photovoltaics_and_wind",
+        source=SRC_SMARD_DOWNLOADCENTER,
+        description="Day-ahead PV + wind generation forecast, MWh per quarter-hour",
+    ))
 
     # 5. Weather (Open-Meteo NWP, population-weighted across 6 load centres).
     OM_VARS = [

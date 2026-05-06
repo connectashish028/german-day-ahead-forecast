@@ -46,13 +46,14 @@ PV = "actual_gen__photovoltaics"
 WIND_ON = "actual_gen__wind_onshore"
 WIND_OFF = "actual_gen__wind_offshore"
 TSO_LOAD_FC = "fc_cons__grid_load"
+TSO_VRE_FC = "fc_gen__photovoltaics_and_wind"  # the dominant price driver
 
 PRICE_ENC_FEATURE_NAMES = (
     "price", "load", "vre_gen",
     "hour_sin", "hour_cos", "dow_sin", "dow_cos",
 )
 PRICE_DEC_FEATURE_NAMES = (
-    "tso_load_fc",
+    "tso_load_fc", "tso_vre_fc",  # NEW: TSO's day-ahead PV+wind forecast
     "hour_sin", "hour_cos", "dow_sin", "dow_cos",
     "is_federal_holiday",
 )
@@ -93,7 +94,7 @@ def build_price_window(
     enc_idx = _encoder_index(issue_time)
     target_idx = _delivery_target_index(issue_time)
 
-    needed = (PRICE, LOAD, PV, WIND_ON, WIND_OFF, TSO_LOAD_FC)
+    needed = (PRICE, LOAD, PV, WIND_ON, WIND_OFF, TSO_LOAD_FC, TSO_VRE_FC)
     if include_weather:
         needed = (*needed, *WEATHER_COLS)
     masked = usable_columns(df, issue_time, include=needed)
@@ -122,8 +123,9 @@ def build_price_window(
     # --- Decoder ----------------------------------------------------
     cal_dec = calendar_features(target_idx)
     tso_d = masked[TSO_LOAD_FC].reindex(target_idx).to_numpy()
+    vre_fc_d = masked[TSO_VRE_FC].reindex(target_idx).to_numpy()
     dec_stack = [
-        tso_d,
+        tso_d, vre_fc_d,
         cal_dec["hour_sin"].to_numpy(),
         cal_dec["hour_cos"].to_numpy(),
         cal_dec["dow_sin"].to_numpy(),

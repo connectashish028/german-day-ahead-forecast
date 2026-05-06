@@ -31,16 +31,14 @@ URL = "https://www.smard.de/nip-download-manager/nip/download/market-data"
 # Candidate module IDs (best guess from SMARD downloadcenter form fields).
 # We confirm them by checking the returned column header.
 CANDIDATES = [
-    # (module_id, expected_label, our_target_column)
-    # Confirmed via browser DevTools capture (forecast sub-category 6):
-    (6000411, "Forecasted consumption: total or residual?", "fc_cons__grid_load"),
-    (6004362, "Forecasted consumption: total or residual?", "fc_cons__residual_load"),
-    # Probe nearby IDs in the 6XXXXXX range for forecasted generation:
-    (6000412, "near-neighbour probe",                       "fc_gen__?"),
-    (6000413, "near-neighbour probe",                       "fc_gen__?"),
-    (6004363, "near-neighbour probe",                       "fc_gen__?"),
-    (6000414, "near-neighbour probe",                       "fc_gen__?"),
-    (6000415, "near-neighbour probe",                       "fc_gen__?"),
+    # 6 IDs captured from the multi-source generation request — looking for
+    # whichever is the renewable forecast (PV + wind day-ahead).
+    (2000122, "candidate from generation multi-request", "fc_gen__?"),
+    (2005097, "candidate from generation multi-request", "fc_gen__?"),
+    (2000715, "candidate from generation multi-request", "fc_gen__?"),
+    (2003791, "candidate from generation multi-request", "fc_gen__?"),
+    (2000123, "candidate from generation multi-request", "fc_gen__?"),
+    (2000125, "candidate from generation multi-request", "fc_gen__?"),
 ]
 
 
