@@ -1,6 +1,6 @@
 # German Day-Ahead Forecasting — Load and Price
 
-[![Daily refresh](https://github.com/connectashish028/german-load-forecast/actions/workflows/daily_refresh.yml/badge.svg)](https://github.com/connectashish028/german-load-forecast/actions/workflows/daily_refresh.yml)
+[![Daily refresh](https://github.com/connectashish028/german-day-ahead-forecast/actions/workflows/daily_refresh.yml/badge.svg)](https://github.com/connectashish028/german-day-ahead-forecast/actions/workflows/daily_refresh.yml)
 
 > Two LSTMs trained on public German grid data. The **load model** beats the TSO's published forecast by **20 %** across a 14-month holdout. The **price model** captures **95 % of perfect-foresight battery P&L** (+€57 k uplift over a 61-day holdout vs a naive trader).
 
