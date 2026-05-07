@@ -960,6 +960,16 @@ else:  # st.session_state.view == "price"
 # --- Methodology footer (shared) ----------------------------------------
 
 st.markdown("---")
+st.markdown("## How a forecast is made")
+st.markdown(
+    """
+    1. **Look back 7 days.** The encoder LSTM reads the past 672 quarter-hours: realised load, TSO error, weather, calendar. Last week's pattern is the template; recent TSO error is the bias to correct.
+    2. **Look forward at what's already known by D-1 12:00 Berlin.** The decoder LSTM reads tomorrow's published facts: TSO load forecast, weather NWP, holiday flag. For the price model: SMARD's day-ahead PV+wind forecast.
+    3. **Mask anything that wouldn't have been knowable at issue time.** Every column is filtered through a per-column "is this available at T?" rule before entering the model. A scrambling test confirms no post-T value sneaks in.
+    4. **Three quantile heads predict P10, P50, P90 for each of tomorrow's 96 quarter-hours.** Load model output is added to the TSO baseline (we predict the *correction*, not the level). Price model output is the prediction directly (no published baseline exists for price).
+    5. **Render.** P50 line + P10–P90 ribbon on the dashboard. After 12:42 Berlin the price clears; load is realised through the day. Performance shows up in the analysis panels.
+    """
+)
 st.markdown("## Methodology")
 st.markdown(
     """
