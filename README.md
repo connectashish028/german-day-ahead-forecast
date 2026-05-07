@@ -1,31 +1,31 @@
-# Day-Ahead German Load Forecasting — Beating the TSO Baseline
+# German Day-Ahead Forecasting — Load and Price
 
 [![Daily refresh](https://github.com/connectashish028/german-load-forecast/actions/workflows/daily_refresh.yml/badge.svg)](https://github.com/connectashish028/german-load-forecast/actions/workflows/daily_refresh.yml)
 
-> A neural network that predicts Germany's electricity demand for tomorrow,
-> trained on public data and measured directly against the grid operator's
-> own forecast. Across 14 months of testing the deployed model cuts the
-> operator's average error by **~20 %**, and up to **+39 % on extreme days**.
+> Two LSTMs trained on public German grid data. The **load model** beats the TSO's published forecast by **20 %** across a 14-month holdout. The **price model** captures **95 % of perfect-foresight battery P&L** (+€57 k uplift over a 61-day holdout vs a naive trader).
 
 ### → Live demo: **[german-load-forecast-v1.streamlit.app](https://german-load-forecast-v1.streamlit.app/)**
 
-Pick tomorrow, or any past day in the holdout, and see the model's forecast next to the operator's published one. Interactive uncertainty bands, hour-of-day error breakdown, and a few notable case-study days pre-loaded (record renewables-glut day, holiday weekends, summer heatwaves).
+Switch between LOAD and PRICE views. Pick tomorrow or any past delivery day; see model forecast, realised values, TSO baseline (load) or naive yesterday baseline (price), per-day error, hour-of-day breakdown, and battery-dispatch P&L panel.
 
 ![Dashboard hero](docs/images/dashboard-hero.png)
 
-**Tomorrow's forecast** — re-rendered every day from the live model:
+**Tomorrow's forecasts** — re-rendered every day from the live models:
 
-![Tomorrow's forecast](docs/images/tomorrow.png)
+![Tomorrow's load forecast](docs/images/tomorrow.png)
+![Tomorrow's day-ahead price forecast](docs/images/tomorrow_price.png)
 
 ## Why this project
 
-Every European grid operator publishes a forecast of how much electricity the country will use the next day. In Germany this lives on the public [SMARD](https://www.smard.de/) portal as `fc_cons__grid_load`, and it's the **operational baseline** every utility, energy trader, and balancing-responsible party plans against.
+Every European grid operator publishes a forecast of how much electricity the country will use the next day. In Germany this lives on the public [SMARD](https://www.smard.de/) portal as `fc_cons__grid_load`, and it's the **operational baseline** every utility, energy trader, and balancing-responsible party plans against. **Beating that real, public, operational forecast is the load model's job.**
 
-This project trains a TensorFlow model on the same public data and measures itself directly against that published forecast. Most machine-learning portfolio projects compare a model to a naive baseline and stop there. Beating a real, public, *operational* forecast — and being able to point to the live numbers — is a qualitatively different signal.
+The **day-ahead spot price** clears in the EPEX auction at 12:00 Berlin time; this is the signal that maps to € on a battery operator's, balancing-responsible party's, or intraday trader's P&L. **The price model's job is to predict that clearing price four hours before the gate closes**, accurately enough to dispatch a battery against it and capture as much of the theoretical-max arbitrage P&L as possible.
 
-
+Most ML portfolio projects compare to a naive baseline and stop there. Beating real, public, *operational* numbers — and being able to point to live values — is a qualitatively different signal.
 
 ### Where the improvement comes from
+
+#### Load model
 
 Five LSTM variants, each adding one feature group on top of the previous, all scored on the same 70-day test set:
 
@@ -39,50 +39,77 @@ Five LSTM variants, each adding one feature group on top of the previous, all sc
 
 The single biggest lever is **showing the model the operator's recent errors**. On its own that one feature delivers more than half the project's total improvement. Adding the operator's forecast a second time as a decoder feature is roughly neutral — a deliberate negative result, since the model is already trained to predict the operator's *error*, the forecast itself doesn't carry extra signal.
 
+#### Price model
+
+Four iterations, each tackling a specific failure mode:
+
+| Version | Change | Result on the 61-day Mar–Apr 2026 holdout |
+|---|---|---|
+| v1 | Encoder = price + load + actual VRE; decoder = TSO load + weather | +18 % MAE vs naive, but **−65 % spread MAE** — median collapse |
+| v2 | + `fc_gen__pv+wind` (TSO day-ahead VRE forecast) | +34 % MAE vs naive, spread gap closed to −23 % |
+| v3 | + 30 % feature-dropout on `fc_gen` for graceful degradation | Full mode unchanged; degraded mode still beats naive by 19 % — model runs all day, not just after 12:30 |
+| **v4** | + Engineered `vre_to_load_ratio` / `vre_percentile`; 3× weight on holidays + Sundays; 0.5× weight on 2022–2023 | **+36 % MAE vs naive on average, +60 % on the worst 10 % of days** |
+| v4 + clip | Domain-rule shift on holiday × top-1 % VRE days, calibrated on 2024–2025 (the M10 patch) | May 1, 2026 (−500 €/MWh): MAE 81.8 → 72.8 |
+
+**The headline trading metric: dispatch a 10 MW / 20 MWh battery against the v4 P50 forecast on each delivery day. The model captures 95.0 % of perfect-foresight P&L vs the naive baseline's 81.3 %** — a +€57 k uplift over the 61-day holdout, ~€1.7 M/year on a 100 MWh fleet.
+
+A surprise finding: P50-only dispatch out-performs P10-charge / P90-discharge dispatch by ~2 pp. **Battery dispatch is a ranking problem, not a calibration problem** — what matters is which slots are cheapest, not the absolute spread.
+
 ## Architecture
 
 ```mermaid
 flowchart LR
-    SMARD[SMARD<br>load + TSO forecast] --> REFRESH
-    EC[Energy-Charts<br>prices + generation] --> REFRESH
-    OM[Open-Meteo<br>weather forecast] --> REFRESH
+    SMARD_API[SMARD API<br>actuals + price] --> REFRESH
+    SMARD_DC[SMARD downloadcenter<br>TSO forecasts] --> REFRESH
+    OM[Open-Meteo<br>weather NWP] --> REFRESH
 
     REFRESH[data.refresh<br>idempotent ingest] --> PARQUET[(merged.parquet)]
-    PARQUET --> FEATS[features<br>leakage-safe windowing]
-    FEATS --> LSTM[seq2seq LSTM<br>P10 / P50 / P90 heads]
+    PARQUET --> FEATS[leakage-safe<br>windowing]
+    FEATS --> LOAD[Load LSTM<br>P10/P50/P90<br>predicts TSO error]
+    FEATS --> PRICE[Price LSTM<br>P10/P50/P90<br>predicts raw price]
 
-    LSTM --> API[FastAPI<br>/forecast]
-    LSTM --> DASH[Streamlit dashboard]
+    LOAD --> DASH[Streamlit dashboard]
+    PRICE --> CLIP[M10 domain clip<br>extreme-tail rule]
+    CLIP --> DASH
+    LOAD --> API[FastAPI /forecast]
     PARQUET --> DASH
-    LSTM --> BACKTEST[backtest harness]
+    LOAD --> BT_L[Backtest vs TSO]
+    PRICE --> BT_P[Backtest vs naive]
 
-    CRON[GitHub Actions<br>daily cron] --> REFRESH
+    CRON[GitHub Actions<br>daily 13:00 CET] --> REFRESH
 ```
 
-Every prediction respects an **issue-time cutoff of 12:00 Berlin time on the day before delivery** — the German day-ahead market gate. A "corrupt-future" test scrambles every post-cutoff value in the source data and asserts the resulting features are byte-for-byte identical, so leakage isn't a thing we hope for, it's tested.
+Every prediction respects an **issue-time cutoff of 12:00 Berlin time on the day before delivery** — the EPEX day-ahead market gate. A "corrupt-future" test scrambles every post-cutoff value in the source data and asserts the resulting features are byte-for-byte identical, so leakage isn't a thing we hope for, it's tested.
 
-A **GitHub Action** runs the refresh + tomorrow-PNG render every day at 13:00 CET. The deployed Streamlit dashboard auto-redeploys on every commit, so the live forecast is always current with no human intervention.
+A **GitHub Action** runs the refresh + smoke-check + tomorrow-PNG renders every day at 13:00 CET. The deployed Streamlit dashboard auto-redeploys on every commit, so the live forecasts are always current with no human intervention.
 
 ## Approach
 
-- **Residual learning.** Instead of predicting load directly, the model predicts the *operator's error* — `actual − TSO_forecast` — and applies the correction. The operator already nails the easy 90 % (calendar, climatology); the model only has to learn the systematic remainder.
-- **Sequence-to-sequence LSTM.** A 64-unit encoder reads the past 7 days of history, hands its state to a 64-unit decoder, which generates 96 quarter-hour predictions for the delivery day. Three output heads produce the P10, P50, and P90 quantile bands. ~36 k parameters total — small enough to train in 3 minutes on a CPU.
-- **Weather from Open-Meteo.** Temperature, solar radiation, wind speed at 100 m, cloud cover — all population-weighted across 6 German load centres. Adds modest average lift but matters disproportionately on extreme-weather days.
-- **Self-refreshing data layer.** Energy-Charts, SMARD, and Open-Meteo all expose authentication-free APIs. One CLI command rebuilds the parquet from public sources; a GitHub Action does it nightly.
+- **Residual learning for load.** Predicts the *operator's error* — `actual − TSO_forecast` — and adds the correction. The operator already nails calendar + climatology; the model only learns the systematic remainder.
+- **Raw target for price.** No published baseline exists for day-ahead price, so the model targets the raw clearing price; naive yesterday-same-quarter-hour is the comparison.
+- **Seq2seq LSTM.** 64-unit encoder reads 7 days of history; hands state to a 64-unit decoder generating 96 quarter-hour predictions. Three quantile heads (P10/P50/P90), pinball loss, ~36 k parameters per model. Both train in under 5 minutes on CPU.
+- **Graceful degradation when features publish late.** SMARD's day-ahead VRE forecast occasionally publishes after the EPEX gate. The price model is trained with 30 % feature-dropout on it so it falls back to weather + load + calendar; the dashboard surfaces a `DEGRADED MODE` badge in that state.
+- **Domain rule for the negative-price tail.** Pinball-loss P50 structurally can't reach −500 €/MWh on rare regime days. A small post-processing shift, calibrated empirically on out-of-holdout data, applies on holiday × top-1 %-VRE days.
+- **Self-refreshing data layer.** SMARD and Open-Meteo expose authentication-free APIs. One CLI command rebuilds the parquet; a GitHub Action does it nightly at 13:00 CET, smoke-checks both models, and commits both PNGs back.
+- **Leakage tested.** A "corrupt-future" test scrambles every post-issue value and asserts the feature arrays are byte-identical.
 
 ## Repo layout
 
 ```
 src/loadforecast/
-  data/        # multi-source ingestion (Energy-Charts, SMARD, Open-Meteo)
-  features/    # leakage-safe feature builders (calendar, lags, availability)
-  models/      # Keras models, dataset windowing, predict wrappers
-  backtest/    # rolling-origin evaluator + TSO + SARIMAX baselines
-  serve/       # FastAPI inference service
-dashboards/    # Streamlit dashboard (deployed to Streamlit Cloud)
-tests/         # pytest — leakage tests, baseline harness, API smoke
-notebooks/     # 8 visualisation + explanation notebooks
-scripts/       # training, refresh, exploration utilities
+  data/      # multi-source ingestion (SMARD API, SMARD downloadcenter, Open-Meteo)
+  features/  # leakage-safe feature builders (calendar, lags, availability)
+  models/    # Keras models (load + price), windowing, predict wrappers, extreme-tail clip
+  backtest/  # rolling-origin evaluator + TSO + SARIMAX baselines
+  serve/     # FastAPI inference service (load model)
+dashboards/  # Streamlit dashboard with LOAD / PRICE views
+tests/       # pytest — leakage tests, baseline harness, API smoke
+notebooks/   # data audit + modelling/explanation notebooks
+scripts/     # training, refresh, render-PNG, smoke-check, P&L simulation
+model_checkpoints/
+  lstm_quantile_v1/    # load model
+  price_quantile_v4/   # price model + extreme_clip.json
+backtest_results/      # holdout CSVs + battery-dispatch P&L
 ```
 
 ## Quickstart
@@ -95,36 +122,44 @@ pip install uv && uv pip install -e ".[dev]"
 # 1. Verify install
 pytest -q
 
-# 2. Refresh the data parquet from public APIs (~5 min)
+# 2. Refresh the parquet from public APIs (~5 min)
 python -m loadforecast.data.refresh --rebuild --start 2022-01-01
 
-# 3. Train the LSTM (~3 min on CPU)
+# 3. Train the load model (~3 min)
 python scripts/train_lstm_quantile.py
 
-# 4. Run the dashboard locally
+# 4. Train the price model + calibrate the M10 clip (~5 min)
+python scripts/train_lstm_price_quantile.py
+python scripts/calibrate_extreme_clip.py
+
+# 5. Backtests + battery P&L
+python -m loadforecast.backtest --predictor lstm_weather \
+    --start 2025-01-01 --end 2026-04-30 --step-days 7 \
+    --out backtest_results/lstm_weather_step7.csv
+python scripts/backtest_price_quantile.py
+python scripts/run_battery_pnl.py
+
+# 6. Dashboard
 streamlit run dashboards/app.py
 
-# 5. Or hit the inference service
+# 7. Or hit the load-model inference service
 uvicorn loadforecast.serve.api:app
-# then POST to localhost:8000/forecast {"delivery_date": "2026-05-06"}
+# then POST to localhost:8000/forecast {"delivery_date": "2026-05-08"}
 ```
 
 ## Data sources
 
 | Source | What | Auth |
 |---|---|---|
-| [SMARD](https://www.smard.de/) (Bundesnetzagentur) | Total grid load, TSO load forecast | none |
-| [Energy-Charts](https://api.energy-charts.info/) (Fraunhofer ISE) | Day-ahead prices for 15 bidding zones, actual generation by source | none |
-| [Open-Meteo](https://open-meteo.com/) | Numerical weather prediction (forecast endpoint) | none |
+| [SMARD](https://www.smard.de/) **API** (Bundesnetzagentur) | Total grid load, residual load, day-ahead clearing price, actual generation by source | none |
+| **SMARD downloadcenter** (JSON) | TSO day-ahead load forecast, TSO day-ahead PV+wind forecast | none |
+| [Open-Meteo](https://open-meteo.com/) | NWP (temperature, solar radiation, wind speed at 100 m, cloud cover; population-weighted across 6 German load centres) | none |
 
 All data is licensed CC-BY 4.0.
 
 ## What's next
 
-- **Day-ahead price forecasting** *(in progress)* — extending the same architecture to predict the German day-ahead spot price, the actual signal traders care about. The data layer already pulls 15 bidding zones, the leakage-safe windowing already exists; the model just needs a new target and a price-aware feature set. Goal: forecast tomorrow's hourly clearing price with calibrated uncertainty bands, then quantify what that forecast is worth in € via a simple battery-dispatch P&L.
-- **Cross-border price features** — 14 neighbour bidding zones already in the parquet; threading them into the windowing pipeline is the next obvious feature ablation.
-- **Conformal calibration** — split-conformal wrapper to upgrade the empirical 78 % uncertainty-band coverage to a finite-sample-guaranteed 80 %.
-- **Weekly retrain** — refit on the latest data, promote the new model only if it beats the current production model on a 4-week holdout window.
+This project is feature-complete. The daily GitHub Action keeps the parquet, both tomorrow PNGs, and the deployed dashboard current; ongoing work is maintenance (data-source resilience, dependency upgrades) rather than new features.
 
 ## License
 
