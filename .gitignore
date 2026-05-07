@@ -64,6 +64,7 @@ logs/
 # Internal planning — kept local
 PLAN.md
 design.md
+PROJECT_NOTES.md
 
 # Outputs
 output/
