@@ -183,6 +183,7 @@ def price_quantile_predict_full(
     issue_time: pd.Timestamp,
     *,
     model_dir: Path | str = DEFAULT_PRICE_QUANTILE_DIR,
+    apply_extreme_clip: bool = True,
 ) -> pd.DataFrame:
     """Probabilistic day-ahead price forecast: returns (96, 3) DataFrame
     with columns p10, p50, p90 in €/MWh.
@@ -191,7 +192,13 @@ def price_quantile_predict_full(
     (no TSO baseline to subtract — the day-ahead price is what we forecast).
     Returns an all-NaN frame indexed on the delivery day if the encoder/
     decoder window cannot be built (e.g. issue_time outside the parquet).
+
+    If `apply_extreme_clip=True` (default) and the model directory contains
+    an `extreme_clip.json` config, applies the M10 domain-rule clip on
+    holiday/weekend × top-1%-VRE days. Pass `False` to get the raw
+    keras output (used by backtesting to A/B the rule).
     """
+    from .extreme_clip import apply_clip, load_clip_config, should_clip
     from .price_dataset import build_price_window
 
     model_dir = Path(model_dir)
@@ -217,6 +224,11 @@ def price_quantile_predict_full(
         index=w.target_idx,
     )
     out.index.name = "target_ts"
+
+    if apply_extreme_clip:
+        cfg = load_clip_config(model_dir)
+        if cfg is not None and should_clip(df, issue_time, w.target_idx, cfg):
+            out = apply_clip(out, cfg)
     return out
 
 

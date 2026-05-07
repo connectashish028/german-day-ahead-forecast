@@ -56,13 +56,20 @@ def _load_model():
     return model, scaler, meta
 
 
-def _predict_quantile(model, scaler, df, issue, *, mask_vre: bool = False):
+def _predict_quantile(model, scaler, df, issue, *, mask_vre: bool = False,
+                      clip_cfg=None):
     """Forecast a single delivery day.
 
     `mask_vre=True` simulates the production case where SMARD's VRE day-ahead
     module hasn't published yet — we zero out tso_vre_fc and its present flag
     BEFORE scaling so the model uses its degraded-mode path.
+
+    `clip_cfg` (when not None) applies the M10 extreme-regime clip on
+    holiday/weekend × top-1%-VRE days. Mirrors what `price_quantile_predict_full`
+    does at runtime, so the backtest CSV reflects the production model.
     """
+    from loadforecast.models.extreme_clip import apply_clip, should_clip
+
     w = build_price_window(df, issue, include_weather=True)
     if np.isnan(w.X_enc).any() or np.isnan(w.X_dec).any():
         return None
@@ -76,10 +83,13 @@ def _predict_quantile(model, scaler, df, issue, *, mask_vre: bool = False):
     raw = model.predict([Xe, Xd], verbose=0)
     y_norm = raw[0]
     y_quant = scaler.inverse_y(y_norm)  # (96, 3)
-    return pd.DataFrame(
+    out = pd.DataFrame(
         {"p10": y_quant[:, 0], "p50": y_quant[:, 1], "p90": y_quant[:, 2]},
         index=w.target_idx,
-    ), w.y_price
+    )
+    if clip_cfg is not None and not mask_vre and should_clip(df, issue, w.target_idx, clip_cfg):
+        out = apply_clip(out, clip_cfg)
+    return out, w.y_price
 
 
 def _naive_lag(df, target_idx, days_back):
@@ -89,11 +99,13 @@ def _naive_lag(df, target_idx, days_back):
     return df[PRICE].reindex(lagged_idx).set_axis(target_idx)
 
 
-def _run_holdout(df, model, scaler, holdout, *, mask_vre: bool):
+def _run_holdout(df, model, scaler, holdout, *, mask_vre: bool, clip_cfg=None):
     rows = []
     for d in holdout:
         issue = issue_time_for(d)
-        result = _predict_quantile(model, scaler, df, issue, mask_vre=mask_vre)
+        result = _predict_quantile(
+            model, scaler, df, issue, mask_vre=mask_vre, clip_cfg=clip_cfg,
+        )
         if result is None:
             continue
         forecast, y_true = result
@@ -170,16 +182,22 @@ def main() -> None:
     print(f"  model: trained {meta['train_n']} days, "
           f"val P50 MAE = {meta['val_p50_mae_eur_mwh']:.2f} EUR/MWh")
 
+    from loadforecast.models.extreme_clip import load_clip_config
+    clip_cfg = load_clip_config(MODEL_DIR)
+    print(f"  extreme clip: {'ON' if clip_cfg else 'off'}"
+          + (f"  (delta={clip_cfg.delta_eur_mwh:.1f} EUR/MWh)" if clip_cfg else ""))
+
     holdout = list(_drange(date(2026, 3, 1), date(2026, 4, 30)))
     print(f"\nBacktesting {len(holdout)} holdout days in BOTH modes...")
 
     # Full-feature mode (production reality after SMARD VRE publishes).
-    bt_full = _run_holdout(df, model, scaler, holdout, mask_vre=False)
+    bt_full = _run_holdout(df, model, scaler, holdout, mask_vre=False, clip_cfg=clip_cfg)
     s_full = _summarise(bt_full, "FULL FEATURES")
 
     # Degraded mode (production reality before SMARD publishes — typical
-    # morning hours when the desk is shaping bids).
-    bt_masked = _run_holdout(df, model, scaler, holdout, mask_vre=True)
+    # morning hours when the desk is shaping bids). Clip is disabled in
+    # degraded mode since the trigger relies on the VRE forecast.
+    bt_masked = _run_holdout(df, model, scaler, holdout, mask_vre=True, clip_cfg=None)
     s_masked = _summarise(bt_masked, "VRE MASKED (degraded mode)")
 
     print()
