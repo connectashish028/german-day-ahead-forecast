@@ -19,7 +19,6 @@ ACTUAL_RESIDUAL = "actual_cons__residual_load"
 TSO_LOAD_FC = "fc_cons__grid_load"
 TSO_RESIDUAL_FC = "fc_cons__residual_load"
 TSO_VRE_FC = "fc_gen__photovoltaics_and_wind"
-TSO_TOTAL_GEN_FC = "fc_gen__total"
 DE_PRICE = "price__germany_luxembourg"
 NEIGHBOUR_PRICES = (
     "price__france",
@@ -65,7 +64,6 @@ def build_target_day_features(df: pd.DataFrame, issue_time: pd.Timestamp) -> pd.
         TSO_LOAD_FC,
         TSO_RESIDUAL_FC,
         TSO_VRE_FC,
-        TSO_TOTAL_GEN_FC,
         DE_PRICE,
         *NEIGHBOUR_PRICES,
     )
@@ -82,7 +80,6 @@ def build_target_day_features(df: pd.DataFrame, issue_time: pd.Timestamp) -> pd.
             "tso_load_fc": masked[TSO_LOAD_FC].reindex(target_idx),
             "tso_residual_fc": masked[TSO_RESIDUAL_FC].reindex(target_idx),
             "tso_vre_fc": masked[TSO_VRE_FC].reindex(target_idx),
-            "tso_total_gen_fc": masked[TSO_TOTAL_GEN_FC].reindex(target_idx),
         }
     )
     tso_block["tso_residual_share"] = tso_block["tso_residual_fc"] / tso_block["tso_load_fc"].replace(

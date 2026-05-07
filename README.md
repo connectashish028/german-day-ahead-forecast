@@ -101,11 +101,10 @@ src/loadforecast/
   features/  # leakage-safe feature builders (calendar, lags, availability)
   models/    # Keras models (load + price), windowing, predict wrappers, extreme-tail clip
   backtest/  # rolling-origin evaluator + TSO + SARIMAX baselines
-  serve/     # FastAPI inference service (load model)
+  serve/     # FastAPI inference service (load + price)
 dashboards/  # Streamlit dashboard with LOAD / PRICE views
 tests/       # pytest — leakage tests, baseline harness, API smoke
-notebooks/   # data audit + modelling/explanation notebooks
-scripts/     # training, refresh, render-PNG, smoke-check, P&L simulation
+scripts/     # training, refresh, render-PNG, smoke-check, P&L simulation, M10 calibration
 model_checkpoints/
   lstm_quantile_v1/    # load model
   price_quantile_v4/   # price model + extreme_clip.json
