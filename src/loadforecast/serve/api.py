@@ -1,19 +1,22 @@
-"""FastAPI inference service for the day-ahead load forecast.
+"""FastAPI inference service for the day-ahead forecasts.
 
 Runs:
     uvicorn loadforecast.serve.api:app --reload
 
 Endpoints:
-    GET  /health    -> liveness + data freshness
-    POST /forecast  -> 96 quarter-hour P10/P50/P90 forecast for a delivery day
+    GET  /health          -> liveness + data freshness
+    POST /forecast        -> 96 quarter-hour P10/P50/P90 LOAD forecast (MWh / QH)
+    POST /forecast/price  -> 96 quarter-hour P10/P50/P90 PRICE forecast (EUR / MWh)
 
 Design:
-- Model + parquet are loaded once at startup (lifespan event), not per request.
-  TF startup is ~3s; loading per request would make the API unusable.
-- The default predictor is the M6 quantile model. Switching predictors is a
-  one-line change in `_predict`.
-- All times in responses are tz-aware ISO8601 (UTC for series timestamps,
-  Berlin-local for the issue time itself since that's the operational gate).
+- Parquet + Keras models loaded once at startup (lifespan event), not per
+  request. TF startup is ~3s; loading per request would make the API
+  unusable.
+- The price endpoint applies the M10 extreme-tail clip if a clip config is
+  present in the price model directory. It also surfaces a `degraded_mode`
+  flag when SMARD's day-ahead VRE forecast hasn't published yet for the
+  requested delivery day.
+- All times in responses are tz-aware ISO8601.
 """
 from __future__ import annotations
 
@@ -22,14 +25,17 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from ..backtest import issue_time_for, load_smard_15min
-from ..models.predict import lstm_quantile_predict_full
+from ..models.predict import lstm_quantile_predict_full, price_quantile_predict_full
 
 PARQUET_PATH = Path("smard_merged_15min.parquet")
+VRE_FC_COL = "fc_gen__photovoltaics_and_wind"
 
 
 class HorizonPoint(BaseModel):
@@ -57,6 +63,22 @@ class ForecastResponse(BaseModel):
     horizons: list[HorizonPoint]
 
 
+class PriceForecastResponse(BaseModel):
+    delivery_date: date
+    issue_time: datetime
+    model: str
+    n_steps: int
+    unit: str = "EUR/MWh"
+    degraded_mode: bool = Field(
+        ...,
+        description="True if SMARD's day-ahead VRE forecast hasn't "
+                    "published yet for the delivery day. The model still "
+                    "produces a forecast (weather + load + calendar), but "
+                    "expect ~+38 % MAE relative to full-feature mode.",
+    )
+    horizons: list[HorizonPoint]
+
+
 # Module-level state holds the loaded parquet + model bundle. Populated by
 # the lifespan event, cleared on shutdown. Keeps the FastAPI app instance
 # free of mutable globals at definition time.
@@ -79,13 +101,14 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="German Day-Ahead Load Forecast",
+    title="German Day-Ahead Forecasts (Load + Price)",
     description=(
-        "Probabilistic 96-step quarter-hourly forecast of the German grid "
-        "load, beating the published TSO baseline by ~25% MAE on the "
-        "2025–2026 holdout window. Returns P10/P50/P90 quantile bands."
+        "Probabilistic 96-step quarter-hourly forecasts. The load model "
+        "beats the TSO baseline by ~20 % MAE on a 14-month holdout. The "
+        "price model captures ~95 % of perfect-foresight battery P&L "
+        "on a 61-day holdout. Both return P10/P50/P90 quantile bands."
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=_lifespan,
 )
 
@@ -154,4 +177,70 @@ def forecast(req: ForecastRequest) -> ForecastResponse:
     )
 
 
-__all__ = ["app", "ForecastRequest", "ForecastResponse", "HorizonPoint"]
+@app.post("/forecast/price", response_model=PriceForecastResponse)
+def forecast_price(req: ForecastRequest) -> PriceForecastResponse:
+    """Probabilistic day-ahead price forecast (EUR/MWh).
+
+    Targets the EPEX clearing price directly (no published baseline to
+    subtract). Applies the M10 extreme-tail clip on holiday/weekend ×
+    top-1 %-VRE days when the trigger fires. Surfaces a `degraded_mode`
+    flag when SMARD's VRE day-ahead forecast hasn't published for the
+    delivery day — the model still produces a useful forecast, but
+    accuracy degrades ~+38 % MAE.
+    """
+    df = _state.get("df")
+    if df is None:
+        raise HTTPException(status_code=503, detail="data not loaded")
+
+    issue = issue_time_for(req.delivery_date)
+    if issue > df.index.max():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Issue time {issue.isoformat()} is past the latest data "
+                f"({df.index.max().isoformat()}). Refresh the parquet first."
+            ),
+        )
+
+    out = price_quantile_predict_full(df, issue)
+    if out["p50"].isna().any():
+        raise HTTPException(
+            status_code=422,
+            detail="Encoder/decoder window has missing values for that "
+                   "issue date — try a date with full feature coverage.",
+        )
+
+    # Detect degraded mode the same way the dashboard does: VRE forecast
+    # column is fully NaN for the delivery day.
+    target_idx = out.index
+    degraded = bool(
+        VRE_FC_COL in df.columns
+        and df[VRE_FC_COL].reindex(target_idx).isna().all()
+    )
+
+    horizons = [
+        HorizonPoint(
+            timestamp=ts.to_pydatetime(),
+            p10=float(row.p10),
+            p50=float(row.p50),
+            p90=float(row.p90),
+        )
+        for ts, row in out.iterrows()
+    ]
+    return PriceForecastResponse(
+        delivery_date=req.delivery_date,
+        issue_time=issue.to_pydatetime(),
+        model="Probabilistic PriceCast v4",
+        n_steps=len(horizons),
+        degraded_mode=degraded,
+        horizons=horizons,
+    )
+
+
+__all__ = [
+    "app",
+    "ForecastRequest",
+    "ForecastResponse",
+    "HorizonPoint",
+    "PriceForecastResponse",
+]

@@ -78,3 +78,44 @@ def test_forecast_rejects_future_beyond_data(client):
     r = client.post("/forecast", json={"delivery_date": "2099-01-01"})
     assert r.status_code == 422
     assert "past the latest data" in r.json()["detail"]
+
+
+# --- Price endpoint -----------------------------------------------------
+
+def test_price_forecast_known_good_date(client):
+    """Mid-holdout day with full feature coverage. Verifies shape, model
+    name, and that prices are in a plausible €/MWh range."""
+    r = client.post("/forecast/price", json={"delivery_date": "2026-04-15"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    assert body["delivery_date"] == "2026-04-15"
+    assert body["model"] == "Probabilistic PriceCast v4"
+    assert body["unit"] == "EUR/MWh"
+    assert body["n_steps"] == 96
+    assert len(body["horizons"]) == 96
+    assert "degraded_mode" in body
+
+    # Quantile sanity. Pinball-loss heads can occasionally cross by a
+    # rounding hair; allow a tiny rate.
+    crossings = sum(
+        1 for h in body["horizons"]
+        if not (h["p10"] <= h["p50"] <= h["p90"])
+    )
+    assert crossings <= 2, f"unexpected quantile crossings: {crossings}/96"
+
+    # Plausible €/MWh range. German DA prices on the holdout sit in
+    # roughly [-200, +400]; we widen the bounds to absorb rare extremes.
+    for h in body["horizons"]:
+        assert -1000 < h["p50"] < 1500, f"implausible p50: {h}"
+
+
+def test_price_forecast_rejects_future_beyond_data(client):
+    r = client.post("/forecast/price", json={"delivery_date": "2099-01-01"})
+    assert r.status_code == 422
+    assert "past the latest data" in r.json()["detail"]
+
+
+def test_price_forecast_rejects_invalid_date(client):
+    r = client.post("/forecast/price", json={"delivery_date": "not-a-date"})
+    assert r.status_code == 422
