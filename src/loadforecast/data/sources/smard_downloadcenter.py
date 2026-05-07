@@ -32,6 +32,10 @@ MAX_CHUNK_DAYS = 90
 MODULE_IDS: dict[str, int] = {
     "fc_cons__grid_load":     6000411,
     "fc_cons__residual_load": 6004362,
+    # Day-ahead renewable-generation forecast — verified by comparing to
+    # actual_gen__pv + actual_gen__wind_* (mean abs diff 3.4 % on a known
+    # past day, consistent with forecast accuracy not pure actuals).
+    "fc_gen__photovoltaics_and_wind": 2005097,
 }
 
 

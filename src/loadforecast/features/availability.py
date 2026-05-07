@@ -29,11 +29,14 @@ at issue time T" iff:
                                                 is a defensive belt-and-braces
                                                 covering D 00:00 -> D+1 00:00
                                                 Berlin local in any timezone.)
-    PRICE_*        :  ts < T - 12h             (D-1 prices clear at D-1 ~12:45,
-                                                which is AFTER our T = D-1 12:00.
-                                                So at T we only have D-2 prices
-                                                and earlier. The 12h cap puts us
-                                                safely on D-2 23:59 or earlier.)
+    PRICE_*        :  ts < T + 12h             (Prices for delivery day D
+                                                clear ~D-1 12:45, after T.
+                                                But prices for delivery D-1
+                                                (auctioned at D-2 12:00,
+                                                published D-2 12:45) ARE
+                                                known at T. So timestamps
+                                                up to D 00:00 Berlin = T + 12h
+                                                are usable.)
     OTHER          :  ts < T                   (default to the strictest rule.)
 """
 
@@ -67,9 +70,10 @@ RULES: dict[str, AvailabilityRule] = {
     # TSO forecast for delivery day D extends to D+1 00:00 Berlin = at most ~36h
     # after issue time T = D-1 12:00 Berlin. Use 48h as a defensive cap.
     ColumnKind.FORECAST: AvailabilityRule(ColumnKind.FORECAST, pd.Timedelta(hours=48)),
-    # Day-ahead prices for D clear ~D-1 12:45 (after T). Cap at T - 12h to ensure
-    # only D-2 prices and earlier are usable.
-    ColumnKind.PRICE: AvailabilityRule(ColumnKind.PRICE, pd.Timedelta(hours=-12)),
+    # Day-ahead prices for delivery day D clear ~D-1 12:45 (after T = D-1 12:00).
+    # But prices for delivery D-1 cleared at D-2 12:45 — they ARE available at T.
+    # The available window is therefore ts < D 00:00 Berlin = T + 12h.
+    ColumnKind.PRICE: AvailabilityRule(ColumnKind.PRICE, pd.Timedelta(hours=12)),
     ColumnKind.OTHER: AvailabilityRule(ColumnKind.OTHER, pd.Timedelta(0)),
 }
 

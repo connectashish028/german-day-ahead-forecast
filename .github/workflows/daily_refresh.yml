@@ -63,18 +63,32 @@ jobs:
           fi
           echo "no_new_data=false" >> "$GITHUB_OUTPUT"
 
-      - name: Render tomorrow's forecast PNG
+      - name: Smoke check — both models produce a valid tomorrow forecast
+        if: steps.refresh.outputs.no_new_data != 'true'
+        run: python scripts/smoke_tomorrow_predict.py
+        continue-on-error: true  # If a publication hasn't landed yet
+                                 # (TSO load forecast, SMARD VRE), the
+                                 # smoke will fail loud — but don't
+                                 # block the parquet commit.
+
+      - name: Render tomorrow's load forecast PNG
         if: steps.refresh.outputs.no_new_data != 'true'
         run: python scripts/render_tomorrow.py
         continue-on-error: true  # if TSO hasn't published tomorrow yet,
                                  # don't fail the whole workflow.
+
+      - name: Render tomorrow's price forecast PNG
+        if: steps.refresh.outputs.no_new_data != 'true'
+        run: python scripts/render_tomorrow_price.py
+        continue-on-error: true  # SMARD VRE day-ahead may publish late
+                                 # — degraded-mode forecast still renders.
 
       - name: Commit and push if changed
         if: steps.refresh.outputs.no_new_data != 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add smard_merged_15min.parquet docs/images/tomorrow.png
+          git add smard_merged_15min.parquet docs/images/tomorrow.png docs/images/tomorrow_price.png
           if git diff --cached --quiet; then
             echo "::notice::No staged changes after refresh — nothing to commit."
             exit 0
