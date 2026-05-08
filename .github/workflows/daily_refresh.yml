@@ -13,9 +13,15 @@ name: Daily refresh
 
 on:
   schedule:
-    # 11:00 UTC = 13:00 CEST in summer / 12:00 CET in winter — comfortably
-    # past the TSO's day-ahead publication around 10:00 CET.
-    - cron: "0 11 * * *"
+    # 09:00 UTC = 11:00 CEST in summer / 10:00 CET in winter. Catches the
+    # TSO load forecast (typically D-1 ~08:00–10:00 CET) but may run
+    # before SMARD publishes the VRE day-ahead forecast (D-1 ~12:30 CET).
+    # That's by design — the price model has feature-dropout training
+    # for exactly that case and renders in DEGRADED MODE instead of
+    # failing. The dashboard shows a badge when this happens. Earlier
+    # cron buys morning-hour coverage at the cost of more degraded-mode
+    # runs on the price PNG.
+    - cron: "0 9 * * *"
   workflow_dispatch:  # allow manual trigger from the Actions tab
 
 permissions:

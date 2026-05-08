@@ -98,6 +98,19 @@ tomorrow = today + timedelta(days=1)
 issue_time_today = datetime.combine(today, time(12, 0), tzinfo=BERLIN)
 
 
+def _parquet_is_stale(threshold_hours: int = 4) -> bool:
+    """True if the parquet's most recent actual is more than `threshold_hours`
+    before today's issue time — meaning the daily refresh hasn't run yet
+    today and the encoder window for tomorrow's forecast will have NaN."""
+    if ACTUAL_COL not in df.columns:
+        return False
+    last_actual = df[ACTUAL_COL].dropna().index.max()
+    if pd.isna(last_actual):
+        return True
+    issue_utc = pd.Timestamp(issue_time_today).tz_convert("UTC")
+    return (issue_utc - last_actual) > pd.Timedelta(hours=threshold_hours)
+
+
 # --- Cached predict + analysis loaders ----------------------------------
 
 @st.cache_data(show_spinner="Forecasting load…")
@@ -405,8 +418,15 @@ if st.session_state.view == "load":
     if tomorrow_fc is None:
         if now_berlin < issue_time_today:
             st.info("**Not yet issued.** Tomorrow is forecast at today 12:00 Berlin. Check back after noon.")
+        elif _parquet_is_stale():
+            st.info(
+                "**Data refresh pending.** The daily GitHub Action runs at "
+                "09:00 UTC (11:00 CET) — until then the parquet has only "
+                "yesterday's actuals, so the encoder window for tomorrow "
+                "is incomplete. Reload after the action finishes."
+            )
         elif tomorrow > data_max:
-            st.info(f"**Data stale.** Parquet runs through {data_max.isoformat()}. Daily refresh runs at 13:00 CET.")
+            st.info(f"**Data stale.** Parquet runs through {data_max.isoformat()}. Daily refresh runs at 11:00 CET.")
         else:
             st.warning("Encoder/decoder window has missing values — upstream data gap.")
     else:
@@ -711,8 +731,15 @@ else:  # st.session_state.view == "price"
     if tomorrow_price is None:
         if now_berlin < issue_time_today:
             st.info("**Not yet issued.** Tomorrow's price forecast publishes at today 12:00 Berlin.")
+        elif _parquet_is_stale():
+            st.info(
+                "**Data refresh pending.** The daily GitHub Action runs at "
+                "09:00 UTC (11:00 CET) — until then the parquet has only "
+                "yesterday's actuals, so the encoder window for tomorrow "
+                "is incomplete. Reload after the action finishes."
+            )
         elif tomorrow > data_max:
-            st.info(f"**Data stale.** Parquet runs through {data_max.isoformat()}. Daily refresh runs at 13:00 CET.")
+            st.info(f"**Data stale.** Parquet runs through {data_max.isoformat()}. Daily refresh runs at 11:00 CET.")
         else:
             st.warning("Encoder/decoder window has missing values — upstream data gap.")
     else:
