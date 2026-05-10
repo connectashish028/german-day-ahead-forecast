@@ -77,6 +77,12 @@ jobs:
                                  # smoke will fail loud — but don't
                                  # block the parquet commit.
 
+      - name: Drift monitor — append yesterday's MAE to the trace
+        if: steps.refresh.outputs.no_new_data != 'true'
+        run: python scripts/drift_monitor.py
+        continue-on-error: true  # Passive observation only — never
+                                 # blocks the refresh.
+
       - name: Render tomorrow's load forecast PNG
         if: steps.refresh.outputs.no_new_data != 'true'
         run: python scripts/render_tomorrow.py
@@ -94,7 +100,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add smard_merged_15min.parquet docs/images/tomorrow.png docs/images/tomorrow_price.png
+          git add smard_merged_15min.parquet docs/images/tomorrow.png docs/images/tomorrow_price.png backtest_results/drift_log.csv
           if git diff --cached --quiet; then
             echo "::notice::No staged changes after refresh — nothing to commit."
             exit 0
